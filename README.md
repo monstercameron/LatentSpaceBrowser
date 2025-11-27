@@ -2,6 +2,8 @@
 
 **LatentSpace** is a recursive, generative encyclopedia that explores the concept of browsing the "latent space" of a Large Language Model (LLM).
 
+**[Try the Live Demo](https://monstercameron.github.io/LatentSpaceBrowser/)**
+
 Unlike a traditional search engine that indexes the static web, LatentSpace generates content on-the-fly, creating a dynamic, infinite graph of knowledge where every link is a new query and every page is a unique synthesis of information.
 
 ## The Concept

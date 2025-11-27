@@ -58,35 +58,67 @@ function calculateCost(model, promptTokens, completionTokens) {
   return (inputCost + outputCost).toFixed(6);
 }
 
-const SYSTEM_PROMPT = `
+const BASE_SYSTEM_PROMPT = `
 You are the engine of "LatentSpace", a recursive encyclopedia. 
 Your goal is to generate a Wikipedia-style article in valid HTML format based on the user's prompt (topic).
 
-**Formatting Rules:**
-1. Return ONLY the HTML content for the article body. Do NOT wrap in <html>, <head>, or <body> tags. Do NOT use markdown code blocks.
-2. Use Tailwind CSS classes for styling.
-3. The structure should include:
-   - A main title (h1) with class "text-3xl font-serif font-medium mb-4 border-b border-gray-200 pb-2".
-   - An optional infobox (div) floated to the right with class "float-right ml-6 mb-6 w-72 bg-gray-50 border border-gray-200 p-4 text-sm hidden lg:block".
-   - Paragraphs (p) with class "mb-4 leading-relaxed text-gray-800".
-   - Section headings (h2) with class "text-2xl font-serif font-medium mt-8 mb-4 border-b border-gray-200 pb-1".
-   - Lists (ul/ol) with class "list-disc pl-6 mb-4 space-y-2".
-4. **CRITICAL:** You must include hyperlinks (<a href="#" data-prompt="Link Concept (context: Current Topic)" class="text-blue-600 hover:underline">Link Text</a>) for related concepts, entities, or interesting tangents within the text. 
-   - **Contextual Linking:** The \`data-prompt\` attribute is MANDATORY. It must combine the linked concept with the current article's topic to ensure the next generation is contextually relevant.
-     - Example: If the article is about "Apple (fruit)" and you link "seeds", the \`data-prompt\` should be "Seeds (context: Apple fruit)".
-     - Example: If the article is about "Apple Inc." and you link "Jobs", the \`data-prompt\` should be "Steve Jobs (context: Apple Inc.)".
-   - **Hyperlink Aggressively:** Linkify almost every non-generic noun, proper noun, technical term, or concept. The goal is to allow the user to "surf" the latent space endlessly. If a word represents a distinct concept, link it.
+**Hyperlink Strategy (The Context Chain):**
+- **CRITICAL:** You must include hyperlinks (<a href="#" data-prompt="..." class="text-blue-600 hover:underline font-medium transition-colors">Link Text</a>) for related concepts.
+- **Contextual Data-Prompt:** The \`data-prompt\` attribute MUST preserve the "Context Chain" of the journey.
+  - Format: \`Previous Context > Current Topic > New Concept\`
+  - Use " > " (chevrons) as the separator.
+  - Example: If the user is on "Apple > Macintosh", and you link "GUI", the data-prompt must be "Apple > Macintosh > GUI".
+  - This ensures that when the user clicks, the next generation knows exactly how they arrived there.
+- **Link Density:** Hyperlink aggressively. Every proper noun, technical term, or distinct concept should be a portal to a new page.
 
-**Content Style:**
-- Encyclopedic, neutral, and informative.
-- If the topic is abstract or fictional, treat it as real within the context of the Latent Space.
+**Tone:**
+- Encyclopedic, authoritative, and exhaustive.
+- If the topic is abstract, treat it with the seriousness of a physical phenomenon.
 `;
 
-export async function generateArticle(topic) {
+const STYLE_INSTRUCTIONS = {
+  short: `
+**Content Requirements:**
+1. **Length:** Concise and punchy (aim for 2,000 - 4,000 tokens). Focus on the core essence.
+2. **Structure:**
+   - A main title (h1) with class "text-3xl font-serif font-bold mb-4 border-b border-gray-300 pb-2".
+   - Short, crisp paragraphs (p) with class "mb-4 leading-relaxed text-gray-800".
+   - Section headings (h2) with class "text-xl font-serif font-bold mt-6 mb-3".
+   - Lists (ul/ol) with class "list-disc pl-6 mb-4 space-y-1".
+3. **Formatting:** Return ONLY the HTML content for the article body. Do NOT wrap in <html>, <head>, or <body> tags.
+`,
+  elaborative: `
+**Content Requirements:**
+1. **Length & Depth:** HIGHLY DETAILED, LONG-FORM (aim for 7,000 - 12,000 tokens). Do not summarize. Go deep into history, technical mechanisms, controversies, theoretical implications, and related fields.
+2. **Structure:**
+   - A main title (h1) with class "text-4xl font-serif font-bold mb-6 border-b-2 border-gray-800 pb-4".
+   - An optional infobox (div) floated to the right with class "float-right ml-8 mb-8 w-80 bg-gray-50 border border-gray-200 p-6 text-sm hidden lg:block shadow-sm rounded".
+   - Long, detailed paragraphs (p) with class "mb-6 leading-loose text-lg text-gray-800 font-light".
+   - Section headings (h2) with class "text-3xl font-serif font-bold mt-12 mb-6 border-b border-gray-300 pb-2".
+   - Sub-headings (h3) with class "text-2xl font-serif font-semibold mt-8 mb-4 text-gray-700".
+   - Lists (ul/ol) with class "list-disc pl-8 mb-6 space-y-3 text-lg".
+3. **Formatting:** Return ONLY the HTML content for the article body. Do NOT wrap in <html>, <head>, or <body> tags.
+`
+};
+
+export async function generateArticle(topic, history = [], style = 'elaborative') {
   try {
     const client = getClient();
-    let prompt = `Generate an article about: ${topic}`;
     
+    // Construct the prompt with history context
+    let prompt = `Generate a comprehensive article about: ${topic}`;
+    
+    // If the topic itself doesn't look like a chain, and we have history, append it for context
+    // But if the topic IS a chain (from a link click), we trust it.
+    const isChain = topic.includes(' > ');
+    if (!isChain && history.length > 0) {
+       const contextChain = history.join(' > ');
+       prompt += `\n\nContext Chain: ${contextChain} > ${topic}`;
+       prompt += `\n(Note: The user arrived here via this path. Ensure the content reflects this specific context.)`;
+    } else if (isChain) {
+       prompt += `\n\n(Note: This is a specific path in the latent space. Focus on the final concept in the context of the preceding chain.)`;
+    }
+
     if (topic === "About LatentSpace") {
       prompt = `
         Generate a technical "About" page for "LatentSpace" as if it were an encyclopedia article about the software itself.
@@ -108,14 +140,18 @@ export async function generateArticle(topic) {
       `;
     }
 
+    const systemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${STYLE_INSTRUCTIONS[style] || STYLE_INSTRUCTIONS.elaborative}`;
+
     const startTime = performance.now();
     const completion = await client.chat.completions.create({
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt }
       ],
       model: getModel(),
-      stream: false, // We can switch to stream later if needed, but for now simple await
+      stream: false, 
+      max_tokens: 8192, // Explicitly allow for long generation
+      temperature: 0.7, // Slightly higher for more creative/diverse content
     });
     const endTime = performance.now();
 

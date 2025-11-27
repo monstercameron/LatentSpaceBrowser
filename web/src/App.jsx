@@ -58,10 +58,13 @@ function App() {
     await navigateToTopic(searchQuery);
   };
 
-  const handleSaveApiKey = (key, model) => {
+  const handleSaveApiKey = (key, model, style) => {
     localStorage.setItem('cerebras_api_key', key);
     if (model) {
       localStorage.setItem('cerebras_model', model);
+    }
+    if (style) {
+      localStorage.setItem('cerebras_style', style);
     }
     // Optionally reload or just let the next request pick it up
     // Reloading ensures everything is fresh
@@ -100,7 +103,9 @@ function App() {
   const navigateToTopic = async (topic) => {
     setIsLoading(true);
     try {
-      const { content, metrics: articleMetrics } = await generateArticle(topic);
+      const historyTopics = history.map(h => h.topic);
+      const style = localStorage.getItem('cerebras_style') || 'elaborative';
+      const { content, metrics: articleMetrics } = await generateArticle(topic, historyTopics, style);
       push({ topic, content, metrics: articleMetrics });
       setMetrics(articleMetrics);
       setSearchQuery(topic); // Update search bar to reflect current topic

@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 export function ApiKeyModal({ isOpen, onClose, onSave }) {
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('gpt-oss-120b');
+  const [style, setStyle] = useState('elaborative');
 
   useEffect(() => {
     if (isOpen) {
@@ -14,6 +15,10 @@ export function ApiKeyModal({ isOpen, onClose, onSave }) {
       if (savedModel) {
         setModel(savedModel);
       }
+      const savedStyle = localStorage.getItem('cerebras_style');
+      if (savedStyle) {
+        setStyle(savedStyle);
+      }
     }
   }, [isOpen]);
 
@@ -23,7 +28,7 @@ export function ApiKeyModal({ isOpen, onClose, onSave }) {
     if (cleanKey.startsWith('Bearer ')) {
       cleanKey = cleanKey.slice(7).trim();
     }
-    onSave(cleanKey, model);
+    onSave(cleanKey, model, style);
     onClose();
   };
 
@@ -64,6 +69,19 @@ export function ApiKeyModal({ isOpen, onClose, onSave }) {
               <option value="zai-glm-4.6">zai-glm-4.6</option>
             </select>
             <p className="text-xs text-gray-500 mt-1">Select the intelligence level for generation.</p>
+          </div>
+
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Article Style</label>
+            <select
+              value={style}
+              onChange={(e) => setStyle(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            >
+              <option value="short">Short but Sweet (&lt; 5k tokens)</option>
+              <option value="elaborative">Elaborative (&gt; 5k tokens)</option>
+            </select>
+            <p className="text-xs text-gray-500 mt-1">Choose the depth and length of generated articles.</p>
           </div>
           
           <div className="flex justify-end gap-2">
