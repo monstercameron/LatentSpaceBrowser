@@ -58,6 +58,27 @@ function calculateCost(model, promptTokens, completionTokens) {
   return (inputCost + outputCost).toFixed(6);
 }
 
+function cleanAiResponse(content) {
+  // 1. Try to find content inside ```html ... ```
+  const htmlBlockMatch = content.match(/```html([\s\S]*?)```/i);
+  if (htmlBlockMatch) {
+    return htmlBlockMatch[1].trim();
+  }
+  
+  // 2. Try to find content inside generic ``` ... ```
+  const genericBlockMatch = content.match(/```([\s\S]*?)```/i);
+  if (genericBlockMatch) {
+    return genericBlockMatch[1].trim();
+  }
+
+  // 3. Fallback: strip start/end markers if they exist at the boundaries
+  return content
+    .replace(/^```html\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+}
+
 const BASE_SYSTEM_PROMPT = `
 You are the engine of "LatentSpace", a recursive encyclopedia. 
 Your goal is to generate a Wikipedia-style article in valid HTML format based on the user's prompt (topic).
@@ -158,7 +179,7 @@ export async function generateArticle(topic, history = [], style = 'elaborative'
     const endTime = performance.now();
 
     const content = completion.choices[0].message.content;
-    const cleanContent = content.replace(/^```html\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '');
+    const cleanContent = cleanAiResponse(content);
     
     const usage = completion.usage || {};
     const totalTokens = usage.total_tokens || 0;
@@ -245,7 +266,7 @@ export async function generateJourneySummary(journey) {
     const endTime = performance.now();
 
     const content = completion.choices[0].message.content;
-    const cleanContent = content.replace(/^```html\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '');
+    const cleanContent = cleanAiResponse(content);
 
     const usage = completion.usage || {};
     const totalTokens = usage.total_tokens || 0;
