@@ -145,11 +145,9 @@ export function Article({ topic, content, onNavigate }) {
       {selection && (
         <SelectionPopup 
           position={selection.position} 
-          onGenerate={() => {
-            const query = topic ? `${selection.text} (context: ${topic})` : selection.text;
-            onNavigate(query);
-            // Keep selection highlighted
-          }} 
+          selectedText={selection.text}
+          contextTopic={topic}
+          onNavigate={onNavigate}
         />
       )}
     </>

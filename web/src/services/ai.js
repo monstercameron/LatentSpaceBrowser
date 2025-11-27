@@ -193,29 +193,42 @@ export async function generateJourneySummary(journey) {
     You are the "Cartographer of Latent Space". 
     The user has just completed a journey through the following topics: ${journeyTopics}.
     
-    Your goal is to generate a beautiful, visual summary of this journey in HTML using Tailwind CSS.
+    Your goal is to generate a sophisticated "Expedition Report" in HTML using Tailwind CSS.
     
-    **Design Requirements:**
-    1. **Title:** "Journey Retrospective" (h1) with a minimalist, high-contrast black and white style.
-    2. **Intro:** A short, poetic paragraph about the thematic thread connecting these topics.
-    3. **Visual Flow:** Create a vertical timeline visualization.
-       - **Aesthetic:** Use a sophisticated black and white theme.
-       - **Structure:** Use a simple, elegant vertical line (border-l-2 border-black) with circular nodes for each step. Do NOT attempt to generate complex SVG curves or paths, as they often break.
-       - **Layout:** 
-         - Use a flexbox layout.
-         - On the left of the line: The step number or a small icon.
-         - On the right of the line: The content card.
-       - For each step in the journey:
-         - Show the topic name as a clickable link (<a href="#" data-prompt="Topic" class="...">Topic</a>).
-         - Provide a 1-sentence summary of why this step was interesting or how it connected to the previous one.
-    4. **Future Paths:** At the end, suggest 3 new divergent paths the user could take next, based on the entire journey context.
+    **Structure & Design:**
     
-    **Technical Rules:**
+    1.  **Header:**
+        - Title: "Journey Retrospective" (text-4xl font-serif font-bold mb-2).
+        - Subtitle: A poetic 1-sentence summary of the path taken (e.g., "From the digital abstraction of X to the biological reality of Y").
+    
+    2.  **The Visualization (The Path):**
+        - Create a vertical "Metro Line" style visualization.
+        - Use a continuous vertical border (border-l-2 border-gray-300 ml-4) to connect the steps.
+        - For each step in the journey:
+            - **Container:** A relative container with padding-left (pl-8) and margin-bottom (mb-8).
+            - **Node:** A circle on the line (absolute left-0 top-2 w-8 h-8 -ml-4 bg-white border-2 border-gray-800 rounded-full flex items-center justify-center text-xs font-bold) to mark the stop number.
+            - **Card:** A distinct card to the right containing:
+                - **Topic:** Large, bold, clickable link (<a href="#" data-prompt="Topic" class="text-xl font-bold hover:underline text-blue-600">Topic</a>).
+                - **Context:** A brief explanation of how this topic relates to the previous one (the "semantic bridge").
+                - **Flavor:** Invent a "Semantic Distance" score (e.g., "Drift: 12%") or "Concept Class" (e.g., "Abstract", "Physical", "Historical").
+    
+    3.  **The Analysis (The Pattern):**
+        - A distinct section titled "Semantic Analysis" (h2 text-2xl font-serif font-bold mt-12 mb-4).
+        - **CRITICAL:** Do NOT describe the "journey", "the path", "the start", or "the end". Do NOT use words like "began", "drifted", "shifted", or "progression". Do NOT mention the user.
+        - **Goal:** Write a single, deep philosophical or technical paragraph that unifies these topics into a coherent concept. Treat the topics as if they are components of a single hidden system. Explain the *relationship* between the concepts directly.
+        - **Style:** Abstract, academic, and profound.
+    
+    4.  **Future Trajectories (Next Steps):**
+        - A section titled "Suggested Expeditions" (h2 text-2xl font-serif font-bold mt-8 mb-4).
+        - Suggest 3 divergent paths for the next journey.
+        - Display these as attractive "Portal" cards (border p-4 rounded hover:bg-gray-50 transition).
+        - Each suggestion must be a clickable link with \`data-prompt\`.
+    
+    **Technical Constraints:**
     - Return ONLY HTML.
     - Use Tailwind CSS for all styling.
-    - Ensure all links use the \`data-prompt\` attribute so they are clickable.
-    - Do NOT include markdown code blocks.
-    - Do NOT use inline SVGs for the timeline structure; use CSS borders and shapes instead.
+    - **CRITICAL:** Ensure the vertical line aligns perfectly with the nodes. Use \`relative\` containers for the steps and \`absolute\` positioning for the dots.
+    - Do NOT use external images or SVGs that might break. Use CSS shapes.
   `;
 
   try {

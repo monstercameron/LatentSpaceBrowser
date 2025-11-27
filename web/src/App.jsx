@@ -52,6 +52,23 @@ function App() {
     }
   }, [current]);
 
+  // Handle deep linking via URL query params
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const topicParam = params.get('topic');
+    
+    // If a topic is provided in the URL, we should navigate to it.
+    // We check if it's different from the current topic to avoid loops,
+    // but we allow it even if history exists (e.g. opening a new tab with history).
+    if (topicParam && (!current || current.topic !== topicParam)) {
+      // If we are in a "fresh" state (no current topic), or explicitly asked via URL,
+      // we trigger the navigation.
+      navigateToTopic(topicParam);
+      // Clean up URL without reloading
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
   const handleSearch = async (e) => {
     e.preventDefault();
     if (!searchQuery.trim()) return;
