@@ -48,6 +48,15 @@
   .dark .hover\:text-blue-800:hover {
     color: theme('colors.blue.300');
   }
+
+  /* External link icon */
+  a.external-link::after {
+    content: " ↗";
+    font-size: 0.75em;
+    margin-left: 2px;
+    vertical-align: text-top;
+    display: inline-block;
+  }
 }
 
 @layer components {

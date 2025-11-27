@@ -71,6 +71,7 @@ Your goal is to generate a Wikipedia-style article in valid HTML format based on
   - This ensures that when the user clicks, the next generation knows exactly how they arrived there.
 - **Link Density:** Hyperlink aggressively. Every proper noun, technical term, or distinct concept should be a portal to a new page.
 - **MANDATORY LINKING:** You MUST wrap EVERY significant proper noun, technical term, entity, or concept in a link. Do not leave interesting terms as plain text. If it can be a page, link it.
+- **External Links:** If you reference a real-world website, source, or tool that exists outside the Latent Space (e.g., "GitHub", "OpenAI", "Wikipedia"), use a standard anchor tag: <a href="https://..." target="_blank" class="text-blue-600 hover:underline external-link">Link Text</a>.
 
 **Tone:**
 - Encyclopedic, authoritative, and exhaustive.

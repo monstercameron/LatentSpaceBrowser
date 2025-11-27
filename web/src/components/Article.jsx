@@ -63,6 +63,13 @@ export function Article({ topic, content, onNavigate }) {
       // Check if the clicked element is an anchor tag
       const link = e.target.closest('a');
       if (link && contentRef.current.contains(link)) {
+        const href = link.getAttribute('href');
+        
+        // If it's an external link, let the browser handle it (open in new tab)
+        if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+          return;
+        }
+
         e.preventDefault();
         // Use data-prompt if available (for contextual surfing), otherwise fallback to text content
         const topic = link.getAttribute('data-prompt') || link.textContent.trim();
@@ -86,12 +93,12 @@ export function Article({ topic, content, onNavigate }) {
 
   // Sanitize HTML
   const sanitizedContent = useMemo(() => {
-    // Process <think> tags before sanitization
+    // Process ქ tags before sanitization
     let processedContent = content;
     
-    // Replace <think> blocks with a collapsible details element
+    // Replace ქ blocks with a collapsible details element
     processedContent = processedContent.replace(
-      /<think>([\s\S]*?)<\/think>/gi, 
+      /ქ([\s\S]*?)<\/think>/gi, 
       (match, innerContent) => {
         return `
           <details class="mb-6 border border-gray-200 rounded-lg bg-gray-50 overflow-hidden group">
@@ -112,6 +119,21 @@ export function Article({ topic, content, onNavigate }) {
       ADD_ATTR: ['target', 'class', 'data-prompt', 'open'], // Allow class for Tailwind and data-prompt for context
     });
   }, [content]);
+
+  // Post-process links to add external icons and security attributes
+  useEffect(() => {
+    if (!contentRef.current) return;
+
+    const links = contentRef.current.querySelectorAll('a');
+    links.forEach(link => {
+      const href = link.getAttribute('href');
+      if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+        link.classList.add('external-link');
+        link.setAttribute('target', '_blank');
+        link.setAttribute('rel', 'noopener noreferrer');
+      }
+    });
+  }, [sanitizedContent]);
 
   return (
     <>
