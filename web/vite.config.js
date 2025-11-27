@@ -6,6 +6,7 @@ import autoprefixer from 'autoprefixer'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  base: '/LatentSpaceBrowser/',
   envDir: '../', // Load .env from the root directory
   build: {
     outDir: '../docs',
