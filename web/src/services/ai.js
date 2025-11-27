@@ -70,6 +70,7 @@ Your goal is to generate a Wikipedia-style article in valid HTML format based on
   - Example: If the user is on "Apple > Macintosh", and you link "GUI", the data-prompt must be "Apple > Macintosh > GUI".
   - This ensures that when the user clicks, the next generation knows exactly how they arrived there.
 - **Link Density:** Hyperlink aggressively. Every proper noun, technical term, or distinct concept should be a portal to a new page.
+- **MANDATORY LINKING:** You MUST wrap EVERY significant proper noun, technical term, entity, or concept in a link. Do not leave interesting terms as plain text. If it can be a page, link it.
 
 **Tone:**
 - Encyclopedic, authoritative, and exhaustive.

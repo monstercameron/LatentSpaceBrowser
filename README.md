@@ -26,7 +26,10 @@ This project is an experiment in **interface design for generative AI**.
 
 *   **Infinite Generative Wikipedia:** Start with any topic, and the browser generates a structured, link-rich article.
 *   **Recursive Navigation:** Clickable terms automatically generate new pages.
-*   **Bring Your Own Key (BYOK):** Securely use your own Cerebras API key (stored locally in your browser).
+*   **Bring Your Own Key (BYOK) & Customization:** 
+    *   **Secure Auth:** Your API key is stored locally in your browser.
+    *   **Model Selector:** Choose your preferred intelligence engine (e.g., Llama 3.1, Qwen, GPT-OSS).
+    *   **Depth Control:** Select your preferred article style—**"Short but Sweet"** for concise overviews or **"Elaborative"** for deep, 10k+ token explorations.
 *   **Session History:** Track your journey through the latent space.
 *   **Performance Metrics:** Real-time display of generation speed and cost.
 *   **Dark Mode:** Fully responsive UI with dark/light theme support.
