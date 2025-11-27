@@ -7,6 +7,10 @@ import autoprefixer from 'autoprefixer'
 export default defineConfig({
   plugins: [react()],
   envDir: '../', // Load .env from the root directory
+  build: {
+    outDir: '../docs',
+    emptyOutDir: true,
+  },
   css: {
     postcss: {
       plugins: [

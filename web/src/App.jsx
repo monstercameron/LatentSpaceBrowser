@@ -11,6 +11,7 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [homeContent, setHomeContent] = useState(null);
+  const [metrics, setMetrics] = useState(null);
   const [isDarkMode, setIsDarkMode] = useState(() => {
     const saved = localStorage.getItem('latent_browser_dark_mode');
     return saved ? JSON.parse(saved) : false;
@@ -44,6 +45,9 @@ function App() {
   useEffect(() => {
     if (current?.topic) {
       setSearchQuery(current.topic);
+      if (current.metrics) {
+        setMetrics(current.metrics);
+      }
       window.scrollTo(0, 0);
     }
   }, [current]);
@@ -73,8 +77,9 @@ function App() {
       // Generate AI summary of the journey
       setIsLoading(true);
       try {
-        const summaryHtml = await generateJourneySummary(journey);
+        const { content: summaryHtml, metrics: summaryMetrics } = await generateJourneySummary(journey);
         setHomeContent(summaryHtml);
+        setMetrics(summaryMetrics);
       } catch (e) {
         console.error("Failed to generate journey summary", e);
         if (e.message.includes('401') || e.message.includes('No API key')) {
@@ -87,6 +92,7 @@ function App() {
     } else {
       // Just go home if no history
       clear();
+      setMetrics(null);
     }
     setSearchQuery('');
   };
@@ -94,8 +100,9 @@ function App() {
   const navigateToTopic = async (topic) => {
     setIsLoading(true);
     try {
-      const content = await generateArticle(topic);
-      push({ topic, content });
+      const { content, metrics: articleMetrics } = await generateArticle(topic);
+      push({ topic, content, metrics: articleMetrics });
+      setMetrics(articleMetrics);
       setSearchQuery(topic); // Update search bar to reflect current topic
     } catch (error) {
       console.error("Failed to load article:", error);
@@ -112,33 +119,35 @@ function App() {
     <div className="min-h-screen bg-gray-100 dark:bg-gray-900 font-sans text-gray-900 dark:text-gray-100 transition-colors duration-200">
       {/* Header */}
       <header className="bg-white dark:bg-gray-900 border-b border-gray-300 dark:border-gray-700 p-4 flex items-center justify-between sticky top-0 z-10 shadow-sm transition-colors duration-200">
-        <div className="flex items-center gap-4">
+        {/* Left: Logo */}
+        <div className="flex items-center gap-4 w-1/4 min-w-fit">
             <div className="text-2xl font-serif font-bold tracking-tight cursor-pointer" onClick={handleHome}>
                 <span className="text-black dark:text-white">Latent</span><span className="text-gray-600 dark:text-gray-400">Space</span>
             </div>
-            <div className="hidden md:block text-sm text-gray-500 dark:text-gray-400 italic">The Free Encyclopedia of Latents</div>
+            <div className="hidden xl:block text-sm text-gray-500 dark:text-gray-400 italic truncate">The Free Encyclopedia of Latents</div>
         </div>
         
-        {/* Navigation Controls */}
-        <div className="flex items-center gap-2">
-            <button 
-                onClick={back} 
-                disabled={!canGoBack}
-                className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${!canGoBack ? 'text-gray-300 dark:text-gray-600' : 'text-gray-600 dark:text-gray-300'}`}
-            >
-                ←
-            </button>
-            <button 
-                onClick={forward} 
-                disabled={!canGoForward}
-                className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${!canGoForward ? 'text-gray-300 dark:text-gray-600' : 'text-gray-600 dark:text-gray-300'}`}
-            >
-                →
-            </button>
-        </div>
+        {/* Center: Nav + Search */}
+        <div className="flex-1 flex items-center justify-center gap-4 max-w-3xl px-4">
+            {/* Navigation Controls */}
+            <div className="flex items-center gap-1 shrink-0">
+                <button 
+                    onClick={back} 
+                    disabled={!canGoBack}
+                    className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${!canGoBack ? 'text-gray-300 dark:text-gray-600' : 'text-gray-600 dark:text-gray-300'}`}
+                >
+                    ←
+                </button>
+                <button 
+                    onClick={forward} 
+                    disabled={!canGoForward}
+                    className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${!canGoForward ? 'text-gray-300 dark:text-gray-600' : 'text-gray-600 dark:text-gray-300'}`}
+                >
+                    →
+                </button>
+            </div>
 
-        <div className="flex-1 max-w-lg mx-4">
-            <form onSubmit={handleSearch} className="relative">
+            <form onSubmit={handleSearch} className="relative w-full max-w-lg">
                 <input 
                     type="text" 
                     value={searchQuery}
@@ -152,19 +161,22 @@ function App() {
             </form>
         </div>
         
-        <button 
-          onClick={() => setIsDarkMode(!isDarkMode)}
-          className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 mr-2"
-          title={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
-        >
-          {isDarkMode ? '☀️' : '🌙'}
-        </button>
+        {/* Right: Actions */}
+        <div className="flex items-center justify-end gap-4 w-1/4 min-w-fit">
+            <button 
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+              title={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+            >
+              {isDarkMode ? '☀️' : '🌙'}
+            </button>
 
-        <div 
-          className="text-sm text-blue-600 dark:text-blue-400 hover:underline cursor-pointer font-medium"
-          onClick={() => setIsApiKeyModalOpen(true)}
-        >
-          BYOK
+            <div 
+              className="text-sm text-blue-600 dark:text-blue-400 hover:underline cursor-pointer font-medium whitespace-nowrap"
+              onClick={() => setIsApiKeyModalOpen(true)}
+            >
+              BYOK
+            </div>
         </div>
       </header>
 
@@ -199,11 +211,22 @@ function App() {
 
       {/* Footer */}
       <footer className="max-w-6xl mx-auto mt-8 p-6 text-sm text-gray-500 dark:text-gray-400 text-center border-t border-gray-200 dark:border-gray-700 transition-colors duration-200">
-        <p>This page was last edited on {new Date().toLocaleDateString()}.</p>
+        {metrics && (
+          <div className="mb-4 flex justify-center gap-6 text-xs font-mono text-gray-400 dark:text-gray-500">
+            <span>TTFT: {metrics.ttft}s</span>
+            <span>TPS: {metrics.tps}</span>
+            <span>Total Time: {metrics.elapsedTime}s</span>
+            <span>Tokens: {metrics.totalTokens}</span>
+            {metrics.cost && <span>Cost: ${metrics.cost}</span>}
+          </div>
+        )}
         <div className="mt-2 space-x-4">
-            <a href="#" className="hover:underline text-blue-600 dark:text-blue-400">Privacy Policy</a>
-            <a href="#" className="hover:underline text-blue-600 dark:text-blue-400">About LatentSpace</a>
-            <a href="#" className="hover:underline text-blue-600 dark:text-blue-400">Disclaimers</a>
+            <button 
+              onClick={() => navigateToTopic("About LatentSpace")} 
+              className="hover:underline text-blue-600 dark:text-blue-400 bg-transparent border-none cursor-pointer"
+            >
+              About LatentSpace
+            </button>
         </div>
       </footer>
     </div>
