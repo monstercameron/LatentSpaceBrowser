@@ -59,24 +59,39 @@ function calculateCost(model, promptTokens, completionTokens) {
 }
 
 function cleanAiResponse(content) {
+  let thinkBlock = '';
+  
+  // Extract <think> block if it exists (regardless of where it is)
+  const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/i);
+  if (thinkMatch) {
+    thinkBlock = thinkMatch[0]; // Keep the tags for Article.jsx to process
+    // Remove it from content to process the rest
+    content = content.replace(thinkMatch[0], '');
+  }
+
+  let htmlContent = content;
+
   // 1. Try to find content inside ```html ... ```
   const htmlBlockMatch = content.match(/```html([\s\S]*?)```/i);
   if (htmlBlockMatch) {
-    return htmlBlockMatch[1].trim();
-  }
-  
-  // 2. Try to find content inside generic ``` ... ```
-  const genericBlockMatch = content.match(/```([\s\S]*?)```/i);
-  if (genericBlockMatch) {
-    return genericBlockMatch[1].trim();
+    htmlContent = htmlBlockMatch[1].trim();
+  } else {
+    // 2. Try to find content inside generic ``` ... ```
+    const genericBlockMatch = content.match(/```([\s\S]*?)```/i);
+    if (genericBlockMatch) {
+      htmlContent = genericBlockMatch[1].trim();
+    } else {
+      // 3. Fallback: strip start/end markers if they exist at the boundaries
+      htmlContent = content
+        .replace(/^```html\s*/i, '')
+        .replace(/^```\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+    }
   }
 
-  // 3. Fallback: strip start/end markers if they exist at the boundaries
-  return content
-    .replace(/^```html\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
+  // Reattach think block at the start
+  return thinkBlock ? `${thinkBlock}\n\n${htmlContent}` : htmlContent;
 }
 
 const BASE_SYSTEM_PROMPT = `

@@ -93,12 +93,12 @@ export function Article({ topic, content, onNavigate }) {
 
   // Sanitize HTML
   const sanitizedContent = useMemo(() => {
-    // Process ქ tags before sanitization
+    // Process <think> tags before sanitization
     let processedContent = content;
     
-    // Replace ქ blocks with a collapsible details element
+    // Replace <think> blocks with a collapsible details element
     processedContent = processedContent.replace(
-      /ქ([\s\S]*?)<\/think>/gi, 
+      /<think>([\s\S]*?)<\/think>/gi, 
       (match, innerContent) => {
         return `
           <details class="mb-6 border border-gray-200 rounded-lg bg-gray-50 overflow-hidden group">
