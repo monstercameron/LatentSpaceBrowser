@@ -1,75 +1,54 @@
-require('dotenv').config();
-const Cerebras = require('@cerebras/cerebras_cloud_sdk');
-const { performance } = require('perf_hooks');
+// Command-line smoke test for a Cerebras key and model. No dependencies.
+//   node --env-file=.env index.js [model] [prompt]
+// Reads APIKEY (or VITE_APIKEY) from the environment.
 
-const client = new Cerebras({
-  apiKey: process.env.APIKEY,
-});
+const apiKey = process.env.APIKEY || process.env.VITE_APIKEY;
+const [model = 'gpt-oss-120b', prompt = 'Write a four-line poem about lighthouses.'] = process.argv.slice(2);
 
 async function main() {
-  const model = 'llama-3.1-8b'; // Defaulting to a known model if the user's one is invalid, but I will try the user's first.
-  // The user asked for 'gpt-oss-120b'. I will use that.
-  const userModel = 'gpt-oss-120b'; 
-  
-  console.log(`Querying model: ${userModel}...`);
+  if (!apiKey) throw new Error('Set APIKEY in .env (or the environment) first.');
+  console.log(`Querying ${model}...`);
 
-  try {
-    const startTime = performance.now();
-    let tokenCount = 0;
-    let firstTokenTime = 0;
+  const started = performance.now();
+  const res = await fetch('https://api.cerebras.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, stream: true, messages: [{ role: 'user', content: prompt }] }),
+  });
+  if (!res.ok) throw new Error(`Cerebras returned ${res.status}: ${await res.text()}`);
 
-    const stream = await client.chat.completions.create({
-      messages: [{ role: 'user', content: 'Write a poem about cars.' }],
-      model: userModel,
-      stream: true,
-    });
-
-    let finalUsage = null;
-
-    for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content || '';
-      if (content) {
-        if (tokenCount === 0) {
-            firstTokenTime = performance.now();
-            console.log(`TTFT (Time To First Token): ${((firstTokenTime - startTime) / 1000).toFixed(2)}s`);
-            console.log(`-- Stream Started --`);
-        }
-        process.stdout.write(content);
-        tokenCount++; // This counts chunks, not tokens
+  let firstToken = 0;
+  let usage = null;
+  let buffer = '';
+  const decoder = new TextDecoder();
+  for await (const bytes of res.body) {
+    buffer += decoder.decode(bytes, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      const data = line.replace(/^data:\s*/, '').trim();
+      if (!data || data === '[DONE]') continue;
+      const chunk = JSON.parse(data);
+      const text = chunk.choices?.[0]?.delta?.content;
+      if (text) {
+        firstToken ||= performance.now();
+        process.stdout.write(text);
       }
-      
-      if (chunk.usage) {
-          finalUsage = chunk.usage;
-      }
+      usage = chunk.usage ?? usage;
     }
+  }
 
-    const endTime = performance.now();
-    const totalSeconds = (endTime - startTime) / 1000;
-    const generationSeconds = (endTime - firstTokenTime) / 1000;
-    
-    // Use actual token count from usage if available, otherwise fallback to chunk count (which is inaccurate)
-    const actualTokens = finalUsage ? finalUsage.completion_tokens : tokenCount;
-    
-    console.log('\n\n--- Stats ---');
-    console.log(`Total tokens: ${actualTokens} ${finalUsage ? '(from usage)' : '(chunks)'}`);
-    console.log(`Total time: ${totalSeconds.toFixed(2)}s`);
-    console.log(`Streaming time: ${generationSeconds.toFixed(2)}s`);
-    
-    // Streaming TPS: Tokens generated during the streaming phase / time of streaming phase
-    // We use actualTokens - 1 because the first token arrived at 'firstTokenTime' (start of interval)
-    // and the rest arrived during 'generationSeconds'. 
-    // However, for simplicity and standard reporting, we often just use actualTokens / generationSeconds.
-    // Let's provide the simple metric as requested.
-    if (generationSeconds > 0) {
-        console.log(`Streaming TPS: ${(actualTokens / generationSeconds).toFixed(2)}`);
-    }
-
-  } catch (error) {
-    console.error("Error querying API:", error);
-    if (error.status === 404 || error.status === 400) {
-        console.log("Tip: Check if the model name is correct. You might want to try 'llama3.1-8b' or 'llama3.1-70b'.");
-    }
+  const seconds = (performance.now() - started) / 1000;
+  console.log('\n\n--- Stats ---');
+  console.log(`Time to first token: ${((firstToken - started) / 1000).toFixed(2)}s`);
+  console.log(`Total time: ${seconds.toFixed(2)}s`);
+  if (usage) {
+    console.log(`Tokens: ${usage.prompt_tokens} in, ${usage.completion_tokens} out`);
+    console.log(`Speed: ${(usage.completion_tokens / seconds).toFixed(0)} tokens/s`);
   }
 }
 
-main();
+main().catch((error) => {
+  console.error(error.message);
+  process.exitCode = 1;
+});

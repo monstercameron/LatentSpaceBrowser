@@ -1,258 +1,219 @@
-import { useState, useEffect } from 'react'
-import { useHistory } from './hooks/useHistory';
-import { generateArticle, generateJourneySummary } from './services/ai';
-import { Article } from './components/Article';
-import { ApiKeyModal } from './components/ApiKeyModal';
-import './App.css'
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Article } from './components/Article.jsx';
+import { Header } from './components/Header.jsx';
+import { Home } from './components/Home.jsx';
+import { Metrics } from './components/Metrics.jsx';
+import { SettingsDialog } from './components/SettingsDialog.jsx';
+import { useHistory } from './hooks/useHistory.js';
+import { dropLegacyStorage, getApiKey, getDark, saveDark } from './lib/settings.js';
+import { leaf, trail } from './lib/topics.js';
+import { ABOUT_TOPIC, generateArticle, generateJourney } from './services/ai.js';
+
+const JOURNEY_TITLE = 'Journey Retrospective';
+
+// A home page reached after two or more stops carries a retrospective of them.
+const hasRetrospective = (entry) => Boolean(entry?.home) && entry.stops?.length > 1;
+const needsWriting = (entry) => Boolean(entry) && !entry.html && (entry.home ? hasRetrospective(entry) : true);
+
+function Skeleton() {
+  return (
+    <div className="skeleton" aria-hidden="true">
+      {[60, 100, 96, 88, 100, 72].map((width, i) => (
+        <div key={i} style={{ width: `${width}%`, height: i === 0 ? '2.25rem' : undefined }} />
+      ))}
+    </div>
+  );
+}
 
 function App() {
-  const { current, push, back, forward, canGoBack, canGoForward, history, clear } = useHistory();
-  const [isLoading, setIsLoading] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
-  const [homeContent, setHomeContent] = useState(null);
-  const [metrics, setMetrics] = useState(null);
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    const saved = localStorage.getItem('latent_browser_dark_mode');
-    return saved ? JSON.parse(saved) : false;
-  });
+  const { entries, current, journey, push, fill, back, forward, canGoBack, canGoForward } = useHistory();
+  const [draft, setDraft] = useState(null); // the page being written: { id, html, status }
+  const [error, setError] = useState(null); // why a page could not be written: { id, message, needsKey }
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [dark, setDark] = useState(getDark);
+  const [spent, setSpent] = useState(() => entries.reduce((sum, entry) => sum + (entry.metrics?.cost ?? 0), 0));
+  const addSpend = useCallback((usd) => setSpent((sum) => sum + usd), []);
 
-  // Handle Dark Mode
+  const { id, topic, stops } = current ?? {};
+  const failed = error?.id === id ? error : null;
+  const writing = needsWriting(current) && !failed;
+  const live = writing && draft?.id === id ? draft : null;
+  const isJourney = hasRetrospective(current) && (writing || Boolean(current.html));
+  const showsPage = Boolean(current) && (!current.home || isJourney);
+  const html = live?.html || current?.html || '';
+  const shownTopic = isJourney ? JOURNEY_TITLE : (topic ?? '');
+  const crumbs = topic ? trail(topic) : [];
+
+  // Keep the search box on the page being shown, without an effect.
+  const [query, setQuery] = useState('');
+  const [queryTopic, setQueryTopic] = useState(null);
+  if (queryTopic !== shownTopic) {
+    setQueryTopic(shownTopic);
+    setQuery(isJourney ? '' : leaf(shownTopic));
+  }
+
+  useEffect(() => dropLegacyStorage(), []);
+
   useEffect(() => {
-    localStorage.setItem('latent_browser_dark_mode', JSON.stringify(isDarkMode));
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [isDarkMode]);
+    document.documentElement.classList.toggle('dark', dark);
+  }, [dark]);
 
-  const [lastJourney, setLastJourney] = useState(() => {
-    try {
-      const saved = localStorage.getItem('latent_browser_last_journey');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  // Persist last journey
   useEffect(() => {
-    localStorage.setItem('latent_browser_last_journey', JSON.stringify(lastJourney));
-  }, [lastJourney]);
+    document.title = shownTopic ? `${leaf(shownTopic)} · LatentSpace` : 'LatentSpace';
+  }, [shownTopic]);
 
-  // Sync search query with current topic when history changes (e.g. back/forward or restore)
+  // Whatever page the reader is on, the model writes it if it has not been
+  // written yet: a new link, a shared ?topic= address, or a page revisited
+  // after its text was dropped. Leaving the page cancels the writing.
   useEffect(() => {
-    if (current?.topic) {
-      setSearchQuery(current.topic);
-      if (current.metrics) {
-        setMetrics(current.metrics);
-      }
-      window.scrollTo(0, 0);
-    }
-  }, [current]);
+    if (!writing) return undefined;
+    const controller = new AbortController();
+    const { signal } = controller;
+    const options = { signal, onUpdate: (update) => signal.aborted || setDraft({ id, ...update }) };
+    const task = topic ? generateArticle(topic, options) : generateJourney(stops, options);
+    task.then(
+      (page) => {
+        if (signal.aborted) return;
+        addSpend(page.metrics.cost);
+        fill(id, page);
+        setDraft(null);
+      },
+      (failure) => {
+        if (signal.aborted) return;
+        setDraft(null);
+        setError({
+          id,
+          message: failure.message || 'Something went wrong.',
+          needsKey: [0, 401, 403].includes(failure.status),
+        });
+      },
+    );
+    return () => controller.abort();
+  }, [writing, id, topic, stops, fill, addSpend]);
 
-  // Handle deep linking via URL query params
+  // A new page starts at the top; going back or forward returns to where the reader was.
+  const scrolls = useRef(new Map());
+  const shownId = useRef(null);
+  const rememberScroll = useCallback(() => scrolls.current.set(shownId.current, window.scrollY), []);
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const topicParam = params.get('topic');
-    
-    // If a topic is provided in the URL, we should navigate to it.
-    // We check if it's different from the current topic to avoid loops,
-    // but we allow it even if history exists (e.g. opening a new tab with history).
-    if (topicParam && (!current || current.topic !== topicParam)) {
-      // If we are in a "fresh" state (no current topic), or explicitly asked via URL,
-      // we trigger the navigation.
-      navigateToTopic(topicParam);
-      // Clean up URL without reloading
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-  }, []);
+    shownId.current = id ?? null;
+    window.scrollTo({ top: scrolls.current.get(id ?? null) ?? 0, behavior: 'instant' });
+  }, [id]);
+  useEffect(() => {
+    // Runs while the page being left is still on screen.
+    window.addEventListener('popstate', rememberScroll);
+    return () => window.removeEventListener('popstate', rememberScroll);
+  }, [rememberScroll]);
 
-  const handleSearch = async (e) => {
-    e.preventDefault();
-    if (!searchQuery.trim()) return;
-    await navigateToTopic(searchQuery);
-  };
+  const navigate = useCallback(
+    (next) => {
+      rememberScroll();
+      push({ topic: next });
+    },
+    [push, rememberScroll],
+  );
 
-  const handleSaveApiKey = (key, model, style) => {
-    localStorage.setItem('cerebras_api_key', key);
-    if (model) {
-      localStorage.setItem('cerebras_model', model);
-    }
-    if (style) {
-      localStorage.setItem('cerebras_style', style);
-    }
-    // Optionally reload or just let the next request pick it up
-    // Reloading ensures everything is fresh
-    window.location.reload();
-  };
-
-  const handleHome = async () => {
-    if (history.length > 0) {
-      const journey = [...history];
-      setLastJourney(journey);
-      clear();
-      
-      // Generate AI summary of the journey
-      setIsLoading(true);
-      try {
-        const { content: summaryHtml, metrics: summaryMetrics } = await generateJourneySummary(journey);
-        setHomeContent(summaryHtml);
-        setMetrics(summaryMetrics);
-      } catch (e) {
-        console.error("Failed to generate journey summary", e);
-        if (e.message.includes('401') || e.message.includes('No API key')) {
-          setIsApiKeyModalOpen(true);
-          alert("Authentication failed. Please check your API Key.");
-        }
-      } finally {
-        setIsLoading(false);
-      }
-    } else {
-      // Just go home if no history
-      clear();
-      setMetrics(null);
-    }
-    setSearchQuery('');
-  };
-
-  const navigateToTopic = async (topic) => {
-    setIsLoading(true);
-    try {
-      const historyTopics = history.map(h => h.topic);
-      const style = localStorage.getItem('cerebras_style') || 'elaborative';
-      const { content, metrics: articleMetrics } = await generateArticle(topic, historyTopics, style);
-      push({ topic, content, metrics: articleMetrics });
-      setMetrics(articleMetrics);
-      setSearchQuery(topic); // Update search bar to reflect current topic
-    } catch (error) {
-      console.error("Failed to load article:", error);
-      if (error.message.includes('401') || error.message.includes('No API key')) {
-        setIsApiKeyModalOpen(true);
-        alert("Authentication failed. Please check your API Key.");
-      }
-    } finally {
-      setIsLoading(false);
-    }
+  // Home ends the journey. With two or more stops behind it, the model writes a retrospective.
+  const goHome = () => {
+    if (!current || (current.home && !isJourney)) return;
+    rememberScroll();
+    push({ home: true, stops: journey.filter((entry) => entry.html).map((entry) => entry.topic) });
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 font-sans text-gray-900 dark:text-gray-100 transition-colors duration-200">
-      {/* Header */}
-      <header className="bg-white dark:bg-gray-900 border-b border-gray-300 dark:border-gray-700 p-4 flex items-center justify-between sticky top-0 z-10 shadow-sm transition-colors duration-200">
-        {/* Left: Logo */}
-        <div className="flex items-center gap-4 w-1/4 min-w-fit">
-            <div className="text-2xl font-serif font-bold tracking-tight cursor-pointer" onClick={handleHome}>
-                <span className="text-black dark:text-white">Latent</span><span className="text-gray-600 dark:text-gray-400">Space</span>
-            </div>
-            <div className="hidden xl:block text-sm text-gray-500 dark:text-gray-400 italic truncate">The Free Encyclopedia of Latents</div>
-        </div>
-        
-        {/* Center: Nav + Search */}
-        <div className="flex-1 flex items-center justify-center gap-4 max-w-3xl px-4">
-            {/* Navigation Controls */}
-            <div className="flex items-center gap-1 shrink-0">
-                <button 
-                    onClick={back} 
-                    disabled={!canGoBack}
-                    className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${!canGoBack ? 'text-gray-300 dark:text-gray-600' : 'text-gray-600 dark:text-gray-300'}`}
-                >
-                    ←
-                </button>
-                <button 
-                    onClick={forward} 
-                    disabled={!canGoForward}
-                    className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${!canGoForward ? 'text-gray-300 dark:text-gray-600' : 'text-gray-600 dark:text-gray-300'}`}
-                >
-                    →
-                </button>
-            </div>
-
-            <form onSubmit={handleSearch} className="relative w-full max-w-lg">
-                <input 
-                    type="text" 
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search LatentSpace..." 
-                    className="w-full border border-gray-300 dark:border-gray-600 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-800 dark:text-white"
-                />
-                <button type="submit" className="absolute right-0 top-0 h-full px-4 bg-blue-600 text-white rounded-r hover:bg-blue-700 font-medium">
-                    Search
-                </button>
-            </form>
-        </div>
-        
-        {/* Right: Actions */}
-        <div className="flex items-center justify-end gap-4 w-1/4 min-w-fit">
-            <button 
-              onClick={() => setIsDarkMode(!isDarkMode)}
-              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
-              title={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
-            >
-              {isDarkMode ? '☀️' : '🌙'}
-            </button>
-
-            <div 
-              className="text-sm text-blue-600 dark:text-blue-400 hover:underline cursor-pointer font-medium whitespace-nowrap"
-              onClick={() => setIsApiKeyModalOpen(true)}
-            >
-              BYOK
-            </div>
-        </div>
-      </header>
-
-      <ApiKeyModal 
-        isOpen={isApiKeyModalOpen} 
-        onClose={() => setIsApiKeyModalOpen(false)} 
-        onSave={handleSaveApiKey} 
+    <>
+      <Header
+        query={query}
+        onQuery={setQuery}
+        onSearch={navigate}
+        onHome={goHome}
+        onBack={back}
+        onForward={forward}
+        canGoBack={canGoBack}
+        canGoForward={canGoForward}
+        dark={dark}
+        onToggleDark={() => {
+          saveDark(!dark);
+          setDark(!dark);
+        }}
+        onSettings={() => setSettingsOpen(true)}
+        busy={writing}
       />
 
-      {/* Main Content */}
-      <main className="max-w-6xl mx-auto p-6 bg-white dark:bg-gray-900 mt-6 shadow-sm min-h-[80vh] flex gap-8 transition-colors duration-200">
-        
-        {/* Article Content */}
-        <div className="flex-1">
-            {isLoading ? (
-                <div className="flex items-center justify-center h-64">
-                    <div className="text-xl text-gray-500 dark:text-gray-400 animate-pulse">Generating article from latent space...</div>
-                </div>
-            ) : current ? (
-                <Article topic={current.topic} content={current.content} onNavigate={navigateToTopic} />
-            ) : homeContent ? (
-                <Article topic="Journey Retrospective" content={homeContent} onNavigate={navigateToTopic} />
-            ) : (
-                <div className="text-center mt-20">
-                    <h1 className="text-4xl font-serif mb-4 text-gray-900 dark:text-gray-100">Welcome to LatentSpace</h1>
-                    <p className="text-gray-600 dark:text-gray-400 text-lg mb-12">Search for any topic to generate a Wikipedia-style article instantly.</p>
-                </div>
+      <main className="mx-auto max-w-5xl px-3 py-5 sm:px-4 sm:py-8">
+        {failed && (
+          <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border-2 border-accent bg-card px-4 py-3">
+            <p className="min-w-0 flex-1">{failed.message}</p>
+            {failed.needsKey && (
+              <button type="button" className="btn" onClick={() => setSettingsOpen(true)}>Open settings</button>
             )}
-        </div>
-
-      </main>
-
-      {/* Footer */}
-      <footer className="max-w-6xl mx-auto mt-8 p-6 text-sm text-gray-500 dark:text-gray-400 text-center border-t border-gray-200 dark:border-gray-700 transition-colors duration-200">
-        {metrics && (
-          <div className="mb-4 flex justify-center gap-6 text-xs font-mono text-gray-400 dark:text-gray-500">
-            <span>TTFT: {metrics.ttft}s</span>
-            <span>TPS: {metrics.tps}</span>
-            <span>Total Time: {metrics.elapsedTime}s</span>
-            <span>Tokens: {metrics.totalTokens}</span>
-            {metrics.cost && <span>Cost: ${metrics.cost}</span>}
+            <button type="button" className="btn btn-primary" onClick={() => setError(null)}>Try again</button>
           </div>
         )}
-        <div className="mt-2 space-x-4">
-            <button 
-              onClick={() => navigateToTopic("About LatentSpace")} 
-              className="hover:underline text-blue-600 dark:text-blue-400 bg-transparent border-none cursor-pointer"
-            >
-              About LatentSpace
-            </button>
+
+        <div className="rounded-xl border border-line bg-card px-5 py-6 shadow-sm sm:px-10 sm:py-9">
+          {!showsPage ? (
+            <Home
+              hasKey={Boolean(getApiKey())}
+              onNavigate={navigate}
+              onSettings={() => setSettingsOpen(true)}
+              onSpend={addSpend}
+            />
+          ) : (
+            <article aria-busy={writing}>
+              {crumbs.length > 0 && (
+                <nav aria-label="Path here" className="mb-3 text-sm text-muted">
+                  <ol className="flex flex-wrap gap-x-1.5">
+                    {crumbs.map((crumb, i) => (
+                      <li key={i}>
+                        {crumb} <span aria-hidden="true">›</span>
+                      </li>
+                    ))}
+                  </ol>
+                </nav>
+              )}
+              {writing && (
+                <p className="mb-3 text-sm font-semibold text-accent" role="status">
+                  {live?.status ?? 'Writing'}…
+                </p>
+              )}
+              {html ? (
+                <Article html={html} topic={isJourney ? '' : topic} onNavigate={navigate} journey={isJourney} />
+              ) : writing ? (
+                <Skeleton />
+              ) : (
+                <>
+                  <h1 className="font-serif text-4xl font-bold">{leaf(shownTopic)}</h1>
+                  <p className="mt-3 text-muted">This page has not been written yet.</p>
+                </>
+              )}
+              {!writing && current.truncated && (
+                <p className="mt-6 flex flex-wrap items-center gap-3 border-t border-line pt-4 text-sm text-muted">
+                  This page ran into its length limit, even after the model continued it.
+                  <button type="button" className="btn" onClick={() => navigate(topic)}>Write it again</button>
+                </p>
+              )}
+              {!writing && current.reasoning && (
+                <details className="mt-6 border-t border-line pt-4 text-sm text-muted">
+                  <summary className="cursor-pointer font-semibold">Model reasoning</summary>
+                  <p className="mt-2 whitespace-pre-wrap font-mono text-xs leading-relaxed">{current.reasoning}</p>
+                </details>
+              )}
+            </article>
+          )}
         </div>
+      </main>
+
+      <footer className="mx-auto max-w-5xl space-y-3 px-4 pb-10 text-center">
+        <Metrics metrics={showsPage && !writing ? current.metrics : null} spent={spent} />
+        <button type="button" className="text-sm text-link underline" onClick={() => navigate(ABOUT_TOPIC)}>
+          About LatentSpace
+        </button>
       </footer>
-    </div>
-  )
+
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+    </>
+  );
 }
 
-export default App
+export default App;

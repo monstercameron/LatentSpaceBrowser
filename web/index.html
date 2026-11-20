@@ -2,9 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LatentSpace Search Engine</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="A recursive, generative encyclopedia: every page is written the moment you ask for it." />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>LatentSpace</title>
+    <script>
+      // Apply the saved theme and text size before first paint so the page never flashes.
+      try {
+        var saved = localStorage.getItem('latent_browser_dark_mode');
+        var dark = saved ? saved === 'true' : matchMedia('(prefers-color-scheme: dark)').matches;
+        if (dark) document.documentElement.classList.add('dark');
+        var size = localStorage.getItem('latent_text_size');
+        if (size) document.documentElement.dataset.text = size;
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

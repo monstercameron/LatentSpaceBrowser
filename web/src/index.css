@@ -2,66 +2,522 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  body {
-    @apply bg-gray-100 text-gray-900 transition-colors duration-200;
-  }
+/*
+ * Two palettes, one set of names. Nothing else in the app needs to know about dark mode.
+ * Contrast targets (WCAG): body and small text at least 7:1 on both surfaces,
+ * and --edge, which draws the outline of every control, at least 3:1.
+ * --line is for decorative dividers only.
+ */
+:root {
+  color-scheme: light;
+  --paper: #f6f3ec;
+  --card: #fffdf9;
+  --ink: #1f1b16;
+  --muted: #565046;
+  --line: #e4ddd0;
+  --edge: #8a8171;
+  --link: #1746a3;
+  --accent: #8a3a0a;
+  --text: 1.125rem; /* article text size, set from Settings */
+}
 
-  .dark body {
-    @apply bg-gray-900 text-gray-100;
+.dark {
+  color-scheme: dark;
+  --paper: #131210;
+  --card: #1b1a17;
+  --ink: #ebe6dc;
+  --muted: #b3aa9b;
+  --line: #302d28;
+  --edge: #726c62;
+  --link: #8fb8ff;
+  --accent: #f0a35e;
+}
+
+:root[data-text='small'] {
+  --text: 1rem;
+}
+:root[data-text='large'] {
+  --text: 1.3rem;
+}
+
+/* Phones hold fewer characters per line, so each size steps down a little. */
+@media (max-width: 639px) {
+  :root {
+    --text: 1.0625rem;
+  }
+  :root[data-text='small'] {
+    --text: 0.9375rem;
+  }
+  :root[data-text='large'] {
+    --text: 1.1875rem;
   }
 }
 
-@layer utilities {
-  /* Dark mode overrides for generated content */
-  .dark .bg-white {
-    background-color: theme('colors.gray.900');
+@media (prefers-contrast: more) {
+  :root {
+    --muted: var(--ink);
+    --edge: var(--ink);
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-paper font-sans text-ink;
+  }
+  /* Thinner smoothing only helps light text on a dark page. */
+  .dark body {
+    @apply antialiased;
   }
 
-  .dark .bg-gray-50 {
-    background-color: theme('colors.gray.800');
+  :focus-visible {
+    outline: 2px solid var(--link);
+    outline-offset: 2px;
   }
 
-  .dark .bg-gray-100 {
-    background-color: theme('colors.gray.900');
+  ::selection {
+    background: color-mix(in srgb, var(--link) 28%, transparent);
   }
 
-  .dark .text-gray-800,
-  .dark .text-gray-900 {
-    color: theme('colors.gray.100');
+  dialog::backdrop {
+    background: rgb(0 0 0 / 0.6);
   }
 
-  .dark .text-gray-600,
-  .dark .text-gray-500 {
-    color: theme('colors.gray.400');
-  }
-
-  .dark .border-gray-200,
-  .dark .border-gray-300 {
-    border-color: theme('colors.gray.700');
-  }
-
-  .dark .text-blue-600 {
-    color: theme('colors.blue.400');
-  }
-
-  .dark .hover\:text-blue-800:hover {
-    color: theme('colors.blue.300');
-  }
-
-  /* External link icon */
-  a.external-link::after {
-    content: " ↗";
-    font-size: 0.75em;
-    margin-left: 2px;
-    vertical-align: text-top;
-    display: inline-block;
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
   }
 }
 
 @layer components {
-  /* Specific overrides for the article container if needed */
-  .dark .prose {
-    @apply text-gray-100;
+  .glass {
+    background: color-mix(in srgb, var(--card) 92%, transparent);
+    backdrop-filter: blur(10px);
+  }
+
+  .icon-btn {
+    @apply inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-muted transition-colors;
+  }
+  .icon-btn:hover:not(:disabled) {
+    @apply bg-paper text-ink;
+  }
+  .icon-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  .btn {
+    @apply inline-flex min-h-[2.5rem] items-center justify-center rounded-lg bg-card px-4 py-1.5 text-sm font-medium text-ink transition-colors;
+    border: 1px solid var(--edge);
+  }
+  .btn:hover {
+    border-color: var(--ink);
+    background: var(--paper);
+  }
+  .btn-primary {
+    @apply bg-ink font-semibold text-card;
+    border-color: var(--ink);
+  }
+  .btn-primary:hover {
+    background: color-mix(in srgb, var(--ink) 86%, var(--card));
+  }
+
+  /* 16px on phones keeps iOS from zooming the page when a field takes focus. */
+  .field {
+    @apply w-full rounded-lg bg-card px-3 py-2 text-base text-ink sm:text-sm;
+    border: 1px solid var(--edge);
+  }
+  .field:hover {
+    border-color: var(--ink);
+  }
+  .field::placeholder {
+    color: var(--muted);
+    opacity: 1;
+  }
+
+  .label {
+    @apply mb-1.5 block text-[0.8125rem] font-semibold text-ink;
+  }
+
+  /* A radio drawn as a card: the dot and the heavier outline both mark the choice. */
+  .choice {
+    @apply relative block cursor-pointer rounded-lg py-2 pl-9 pr-3 transition-colors;
+    border: 1px solid var(--edge);
+  }
+  .choice::before {
+    content: '';
+    position: absolute;
+    left: 0.75rem;
+    top: 0.7rem;
+    width: 1rem;
+    height: 1rem;
+    border: 1px solid var(--edge);
+    border-radius: 9999px;
+    background: var(--card);
+  }
+  .choice:hover {
+    border-color: var(--ink);
+  }
+  .choice:has(:checked) {
+    border-color: var(--ink);
+    box-shadow: inset 0 0 0 1px var(--ink);
+    background: var(--paper);
+  }
+  .choice:has(:checked)::before {
+    border: 0.3rem solid var(--ink);
+  }
+  .choice:has(:focus-visible) {
+    outline: 2px solid var(--link);
+    outline-offset: 2px;
+  }
+
+  /* Indeterminate bar under the header while a page streams in. */
+  .progress {
+    height: 3px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent) no-repeat;
+    background-size: 35% 100%;
+    animation: slide 1.1s linear infinite;
+  }
+
+  .skeleton > div {
+    height: 0.95rem;
+    margin-bottom: 0.9rem;
+    border-radius: 0.3rem;
+    background: var(--line);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+
+  /*
+   * The model writes bare semantic HTML; everything it writes is styled here.
+   *
+   * The page is a grid so the key facts and contents can sit in a side rail on
+   * wide screens while the text keeps a comfortable line length (about 70
+   * characters). Grid items do not collapse margins, so spacing is set with
+   * margin-top only.
+   */
+  .article {
+    @apply font-serif;
+    --measure: 34em;
+    --gap: calc(var(--text) * 0.95);
+    display: grid;
+    grid-template-columns: minmax(0, var(--measure));
+    justify-content: center;
+    font-size: var(--text);
+    line-height: 1.65;
+    overflow-wrap: break-word;
+  }
+  .article > * + * {
+    margin-top: var(--gap);
+  }
+
+  .article h1 {
+    font-size: clamp(2rem, 6vw, 2.75rem);
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    padding-bottom: 0.65rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .article h2 {
+    font-size: 1.4em;
+    font-weight: 700;
+    line-height: 1.25;
+    text-wrap: balance;
+    padding-bottom: 0.25rem;
+    border-bottom: 1px solid var(--line);
+    scroll-margin-top: 5.5rem;
+  }
+  .article h3,
+  .article h4 {
+    font-size: 1.12em;
+    font-weight: 700;
+    line-height: 1.3;
+    text-wrap: balance;
+  }
+  .article > h3,
+  .article > h4 {
+    margin-top: calc(var(--gap) * 1.7);
+  }
+  .article > h2 {
+    margin-top: calc(var(--gap) * 2.4);
+  }
+  .article > h2 + *,
+  .article > h3 + *,
+  .article > h4 + * {
+    margin-top: calc(var(--gap) * 0.6);
+  }
+
+  .article p {
+    text-wrap: pretty;
+  }
+  .article ul {
+    list-style: disc;
+    padding-left: 1.4rem;
+  }
+  .article ol {
+    list-style: decimal;
+    padding-left: 1.4rem;
+  }
+  .article li {
+    margin: 0.3rem 0;
+  }
+  .article li::marker {
+    color: var(--muted);
+  }
+  .article b,
+  .article strong {
+    font-weight: 700;
+  }
+
+  /*
+   * Most sentences carry a link, so links keep the text colour and are marked
+   * by their underline; colouring every one made paragraphs hard to read.
+   */
+  .article a[href] {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-thickness: 0.07em;
+    text-underline-offset: 0.2em;
+    text-decoration-color: color-mix(in srgb, var(--link) 80%, transparent);
+    border-radius: 0.15rem;
+  }
+  .article a[href]:hover {
+    color: var(--link);
+    text-decoration-thickness: 0.12em;
+    text-decoration-color: currentColor;
+  }
+  .article a[target] {
+    color: var(--link);
+  }
+  .article a[target]::after {
+    content: '\2197';
+    font-size: 0.7em;
+    margin-left: 0.15em;
+  }
+
+  .article blockquote {
+    border-left: 3px solid var(--accent);
+    padding-left: 1rem;
+    font-style: italic;
+  }
+  .article table {
+    @apply font-sans;
+    display: block;
+    overflow-x: auto;
+    border-collapse: collapse;
+    font-size: 0.85em;
+    line-height: 1.45;
+  }
+  .article th,
+  .article td {
+    border: 1px solid var(--line);
+    padding: 0.45rem 0.7rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  .article th {
+    background: var(--paper);
+    font-weight: 600;
+  }
+  .article code {
+    @apply font-mono;
+    font-size: 0.85em;
+    background: var(--paper);
+    padding: 0.1em 0.3em;
+    border-radius: 0.25rem;
+  }
+  .article pre {
+    overflow-x: auto;
+    padding: 0.9rem 1rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    font-size: 0.85em;
+    line-height: 1.5;
+  }
+  .article pre code {
+    background: none;
+    padding: 0;
+  }
+
+  /* Key-facts box: a compact grid in the text column, a list in the side rail. */
+  .article aside {
+    @apply font-sans;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+    gap: 0.8rem 1.25rem;
+    font-size: 0.82em;
+    line-height: 1.4;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 0.6rem;
+    padding: 0.9rem 1rem;
+  }
+  .article aside p > b:first-child,
+  .article .toc > p {
+    display: block;
+    margin-bottom: 0.1rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* Contents, built by the app from the page's own headings. Shown in the rail. */
+  .article .toc {
+    @apply font-sans;
+    display: none;
+    margin-top: 1.5rem;
+    font-size: 0.875rem;
+    line-height: 1.35;
+  }
+  .article .toc > p {
+    margin-bottom: 0.5rem;
+  }
+  .article .toc ol {
+    list-style: none;
+    padding: 0;
+    border-left: 2px solid var(--line);
+  }
+  .article .toc li {
+    margin: 0;
+  }
+  .article .toc a[href] {
+    display: block;
+    margin-left: -2px;
+    padding: 0.35rem 0 0.35rem 0.85rem;
+    border-left: 2px solid transparent;
+    border-radius: 0;
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .article .toc a[href]:hover {
+    color: var(--ink);
+    border-left-color: var(--ink);
+  }
+
+  /* In one column the lead paragraph comes first, then the key facts. */
+  .article > h1 {
+    order: -2;
+  }
+  .article > .rail + p {
+    order: -1;
+  }
+
+  @media (min-width: 1024px) {
+    .article:not(.journey) {
+      grid-template-columns: minmax(0, var(--measure)) 16rem;
+      column-gap: 2.75rem;
+    }
+    .article > * {
+      grid-column: 1;
+    }
+    .article > h1 {
+      grid-column: 1 / -1;
+    }
+    /* Spans every row of the page so it can stay in view while the text scrolls. */
+    .article > .rail {
+      grid-column: 2;
+      grid-row: 2 / span 200;
+      align-self: start;
+      position: sticky;
+      top: 5.25rem;
+      max-height: calc(100vh - 6.5rem);
+      overflow-y: auto;
+      margin-top: calc(var(--gap) + 0.35rem);
+    }
+    .article .rail aside {
+      display: block;
+      padding: 0.4rem 1rem;
+    }
+    .article .rail aside p {
+      padding: 0.6rem 0;
+    }
+    .article .rail aside p + p {
+      border-top: 1px solid var(--line);
+    }
+    .article .toc {
+      display: block;
+    }
+  }
+
+  /* Journey retrospective: the model's <ol> is drawn as a metro line, its <ul> as portal cards. */
+  .journey {
+    --measure: 36em;
+  }
+  .journey ol {
+    list-style: none;
+    margin: 1.75rem 0 0.5rem 0.75rem;
+    padding: 0;
+    border-left: 2px solid var(--edge);
+    counter-reset: stop;
+  }
+  .journey ol > li {
+    position: relative;
+    margin: 0;
+    padding: 0 0 1.4rem 1.75rem;
+    counter-increment: stop;
+  }
+  .journey ol > li:last-child {
+    padding-bottom: 0;
+  }
+  .journey ol > li::before {
+    @apply font-sans;
+    content: counter(stop);
+    position: absolute;
+    left: calc(-0.85rem - 1px);
+    top: 0.1rem;
+    width: 1.7rem;
+    height: 1.7rem;
+    border: 2px solid var(--ink);
+    border-radius: 9999px;
+    background: var(--card);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: calc(1.7rem - 4px);
+    text-align: center;
+  }
+  .journey ul {
+    list-style: none;
+    padding: 0;
+    display: grid;
+    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  }
+  .journey ul > li {
+    margin: 0;
+    padding: 0.9rem 1rem;
+    border: 1px solid var(--edge);
+    border-radius: 0.6rem;
+    background: var(--paper);
+    font-size: 0.9em;
+    line-height: 1.5;
+  }
+  .journey li > a:first-child {
+    font-weight: 700;
+  }
+}
+
+@keyframes slide {
+  from {
+    background-position: -55% 0;
+  }
+  to {
+    background-position: 155% 0;
+  }
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress,
+  .skeleton > div {
+    animation: none;
   }
 }

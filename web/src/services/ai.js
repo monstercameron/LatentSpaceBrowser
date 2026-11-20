@@ -1,308 +1,377 @@
-import Cerebras from '@cerebras/cerebras_cloud_sdk';
+import { getApiKey, getSettings } from '../lib/settings.js';
+import { leaf, trail, SEP } from '../lib/topics.js';
+import { STYLES, cost, getModel } from './models.js';
 
-// Initialize the client
-// Note: In a real production app, you'd want to proxy this through a backend to hide the key.
-// For this demo, we assume the key is available in the environment or hardcoded for local use.
-// Since Vite exposes env vars prefixed with VITE_, we should check that too if we were using .env files.
-// However, we are reusing the node process.env from the previous context if possible, 
-// but in the browser, we need to rely on Vite's import.meta.env or a hardcoded key for the demo if not set up.
-// For now, we'll assume the user might need to input it or it's hardcoded for the "demo" feel.
-// We will try to use the one from the node script if we can, but browser can't access process.env directly like that.
-// Let's use a placeholder or expect the user to provide it in the UI if it fails.
-// Actually, for this specific request, I will use the key I saw earlier in the .env file 
-// but I should be careful. The user said "not api key is in .env". 
-// Vite exposes env vars prefixed with VITE_ by default, but we can also access others if configured.
-// However, since we can't easily change the .env file prefix right now without editing it, 
-// and the user asked to grab it from .env where it is named APIKEY.
-// Vite by default only exposes VITE_ prefixed variables to the client.
-// To fix this properly without changing .env, we can use the define option in vite.config.js or just hardcode for this session as a fallback
-// but let's try to do it the "right" way by updating the .env file to have a VITE_ prefix or updating vite config to expose it.
-// Actually, the easiest way for the user is if I just update the .env file to have VITE_APIKEY as well.
-// But I'll try to read it as is. If it fails, I will fallback to the hardcoded one which matches the file.
+const API_URL = 'https://api.cerebras.ai/v1/chat/completions';
+const MAX_CONTINUATIONS = 2;
 
-const API_KEY = import.meta.env.VITE_APIKEY || ''; 
+export const ABOUT_TOPIC = 'About LatentSpace';
 
-function getClient() {
-  const storedKey = localStorage.getItem('cerebras_api_key');
-  const apiKey = storedKey ? storedKey.trim() : API_KEY;
-  
-  if (!apiKey) {
-    throw new Error("No API key found. Please click 'BYOK' to enter your key.");
+export class ApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+/* ---------------------------------------------------------------- prompts */
+
+// The page is styled by the app, so the model writes bare semantic HTML. No
+// classes and no link attributes: that markup used to be most of every reply.
+const CONTRACT = `You are the engine of LatentSpace, an encyclopedia whose every page is written on demand.
+Reply with one HTML fragment and nothing else. It begins with <h1> and ends with a closing tag. Never use markdown, code fences, commentary, <html>, <body>, or class, style and id attributes.
+Tags you may use: h1 h2 h3 p ul ol li a b i blockquote aside table tr th td code pre.
+Links are how readers travel, so every page needs them. In each paragraph, wrap the two to four most notable people, places, objects, terms or concepts in a bare <a>...</a> with no attributes. Never link the same thing twice on a page, and never link common words. The link text becomes the next page's topic, so make it a self-contained noun phrase.
+Bold is not a link. In running text use <b> exactly once: for the page's own subject, where the lead paragraph introduces it. The subject itself is never a link. Never put any other name in <b>; make it a link instead.
+The style, for a page about basalt: <p><b>Basalt</b> is a dark <a>volcanic rock</a> that forms when <a>lava</a> cools quickly at the surface.</p>
+Only for a real website whose exact URL you are certain of, use <a href="https://...">. Never guess a URL; use a bare link instead.
+Tone: encyclopedic, precise, confident.`;
+
+const ARTICLE = (words) => `${CONTRACT}
+Page layout: <h1>title</h1>, an <aside> of 3 to 6 key facts written as <p><b>Label</b> value</p>, a lead paragraph, then <h2> sections.
+Length: about ${words} words. Finish the page within that length.`;
+
+const CONTINUE = (draft) => `Your reply hit the token limit and was cut off. Its last characters were:
+${draft.slice(-100)}
+Continue from the very next character, even if that is the middle of a word or a tag: repeat nothing, restart nothing, add no commentary. Bring the page to a close within 120 words and close every tag that is still open.`;
+
+const REPAIR = `${CONTRACT}
+The fragment you are given breaks these rules. Return it corrected, with its wording otherwise unchanged.`;
+
+const RELINK = `${CONTRACT}
+The fragment you are given has almost no links, so its reader has nowhere to go. Return it with its wording unchanged and its links added by the rule above: two to four bare <a>...</a> links in each paragraph, no more, and nothing linked twice. Where a name you link is in <b>, replace the <b> with the <a>.`;
+
+function articlePrompt(topic) {
+  if (topic === ABOUT_TOPIC) {
+    return `Topic: LatentSpace, the software this page is part of. Write its entry from these facts only:
+- A recursive, generative encyclopedia: every page is written on the fly by a language model, and every link opens a page that did not exist until it was clicked.
+- A static React and Vite app styled with Tailwind CSS. It has no backend; the browser streams pages straight from Cerebras Inference.
+- Bring your own key: the Cerebras API key stays in the browser's local storage.
+- The model writes plain semantic HTML and the app styles it, which keeps pages cheap. The app tracks the reader's path and sends it as context with each click.
+- When a reply is cut off or malformed, the model is asked to continue or repair its own page.
+- Each page reports time to first token, tokens per second and cost.
+- Going home ends the journey with a "Journey Retrospective" written by the model.`;
+  }
+  const path = trail(topic);
+  if (path.length === 0) return `Topic: ${topic}`;
+  return `Topic: ${leaf(topic)}
+Reached via: ${path.join(SEP)}
+Write about the topic as it relates to that path.`;
+}
+
+const JOURNEY = (stops) => `A reader travelled this path through LatentSpace: ${stops.join(' → ')}.
+Write the "Journey Retrospective" page in exactly this shape:
+<h1>Journey Retrospective</h1>
+<p><i>One poetic sentence that sums up the path.</i></p>
+<ol> with one <li> per stop, in order: <a>the stop</a>, a dash, then one sentence on how it bridges from the stop before.
+<h2>Semantic Analysis</h2> and one dense <p> that unifies the topics as parts of a single hidden system. Describe how the concepts relate. Do not mention the reader, the journey or its order.
+<h2>Suggested Expeditions</h2> and a <ul> of 3 <li>, each <a>a new topic</a>, a dash, then one sentence of intrigue. The three must diverge from each other.`;
+
+// A model asked the same question gives much the same answer, so the app picks
+// the fields at random and the model picks the topics.
+const FIELDS = [
+  'astronomy', 'geology', 'marine biology', 'medieval history', 'ancient civilizations', 'mathematics',
+  'linguistics', 'architecture', 'music', 'mythology', 'economics', 'philosophy', 'materials science',
+  'botany', 'cartography', 'textiles', 'food and cooking', 'navigation', 'typography', 'weather',
+  'human anatomy', 'civil engineering', 'folklore', 'chemistry', 'optics', 'games and puzzles',
+  'agriculture', 'cryptography', 'zoology', 'timekeeping', 'trade routes', 'volcanoes',
+];
+
+const STARTERS = (fields) => `Suggest ${fields.length} encyclopedia topics for a curious reader to start from, one from each of these fields, in this order: ${fields.join(', ')}.
+Each is a specific, concrete subject named in one to three words and capitalised as an encyclopedia title, and not the first example anyone would think of.
+Reply with the topics only, one per line: no numbering, bullets, punctuation or commentary.`;
+
+/* ------------------------------------------------------------- transport */
+
+async function toError(res) {
+  let detail = '';
+  try {
+    const body = await res.json();
+    detail = body?.message ?? body?.error?.message ?? '';
+  } catch {
+    // no JSON body
+  }
+  const reasons = {
+    401: 'Cerebras rejected the API key.',
+    403: 'This API key is not allowed to use that model.',
+    404: 'That model is not available for this API key.',
+    429: 'Rate limit reached. Wait a moment and try again.',
+  };
+  const reason = reasons[res.status] ?? `Cerebras returned an error (${res.status}).`;
+  return new ApiError(detail ? `${reason} ${detail}` : reason, res.status);
+}
+
+async function* serverEvents(res) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buffer += decoder.decode(value, { stream: true });
+    let end;
+    while ((end = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, end).trim();
+      buffer = buffer.slice(end + 1);
+      if (!line.startsWith('data:')) continue;
+      const data = line.slice(5).trim();
+      if (data === '[DONE]') return;
+      yield JSON.parse(data);
+    }
+  }
+}
+
+/** One streamed model call. Returns its text, how it ended and what it used. */
+async function pass({ model, messages, maxTokens, temperature = 0.7, signal, onText }) {
+  const apiKey = getApiKey();
+  if (!apiKey) throw new ApiError('Add your Cerebras API key in Settings to start exploring.', 401);
+
+  const started = performance.now();
+  let res;
+  try {
+    res = await fetch(API_URL, {
+      method: 'POST',
+      signal,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: model.id,
+        messages,
+        stream: true,
+        max_completion_tokens: maxTokens,
+        temperature,
+        reasoning_effort: model.effort,
+      }),
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') throw error;
+    // Cerebras sends no CORS headers on a rejected key, so the browser reports
+    // that case exactly like a dropped connection.
+    throw new ApiError('No answer from Cerebras. The connection dropped or the API key was rejected: check the key in Settings.', 0);
+  }
+  if (!res.ok) throw await toError(res);
+
+  let text = '';
+  let reasoning = '';
+  let finish = null;
+  let usage = null;
+  let firstToken = 0;
+  for await (const chunk of serverEvents(res)) {
+    const choice = chunk.choices?.[0];
+    const delta = choice?.delta;
+    if (delta?.reasoning) reasoning += delta.reasoning;
+    if (delta?.content) {
+      firstToken ||= performance.now();
+      text += delta.content;
+      onText?.(text);
+    }
+    if (choice?.finish_reason) finish = choice.finish_reason;
+    if (chunk.usage) usage = chunk.usage;
   }
 
-  return new Cerebras({
-    apiKey: apiKey,
-    dangerouslyAllowBrowser: true 
+  const ended = performance.now();
+  return {
+    text,
+    reasoning,
+    finish,
+    ttft: ((firstToken || ended) - started) / 1000,
+    seconds: (ended - started) / 1000,
+    inTokens: usage?.prompt_tokens ?? 0,
+    outTokens: usage?.completion_tokens ?? 0,
+  };
+}
+
+/* ------------------------------------------------------------- multi-pass */
+
+const VOID_TAGS = new Set(['br', 'hr']);
+const END_TAG_OPTIONAL = new Set(['p', 'li', 'td', 'th']); // HTML lets these be left unclosed
+
+/**
+ * True when a reply honours the contract: a fragment that opens with <h1> and
+ * ends inside the page. A last paragraph left without its </p> is valid HTML
+ * and not a fault. Text after the page has closed (a sign-off, a code fence)
+ * or a sentence that stops midway is.
+ */
+export function wellFormed(html) {
+  const text = html.trim();
+  if (!/^<h1[\s>]/i.test(text)) return false;
+  if (/<\/[a-z][a-z0-9]*>$/i.test(text)) return true;
+
+  const open = [];
+  for (const [, closing, name] of text.matchAll(/<(\/?)([a-z][a-z0-9]*)\b[^>]*>/gi)) {
+    const tag = name.toLowerCase();
+    if (VOID_TAGS.has(tag)) continue;
+    if (!closing) open.push(tag);
+    else if (open.includes(tag)) open.length = open.lastIndexOf(tag);
+  }
+  return END_TAG_OPTIONAL.has(open.at(-1)) && /[.!?)"'’”]$/.test(text);
+}
+
+const throttle = (fn, ms = 80) => {
+  let last = 0;
+  return (...args) => {
+    const now = performance.now();
+    if (now - last < ms) return;
+    last = now;
+    fn(...args);
+  };
+};
+
+/** How many links a page carries. */
+export const countLinks = (html) => (html.match(/<a[\s>]/gi) ?? []).length;
+
+/**
+ * Writes a page in up to four kinds of pass. Every fix comes from the model:
+ *   1. write     - the page itself
+ *   2. continue  - only if the reply was cut off, the model finishes its own draft
+ *   3. repair    - only if the result breaks the format contract, the model rewrites it
+ *   4. link      - only if the page has too few links to travel by, the model adds them
+ * The code only decides whether another pass is needed.
+ */
+async function compose({ system, user, budget, minLinks = 0, signal, onUpdate }) {
+  const model = getModel(getSettings().model);
+  const messages = [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ];
+  const show = throttle((html, status) => onUpdate?.({ html, status }));
+  const runs = [];
+
+  let run = await pass({ model, messages, maxTokens: budget, signal, onText: (t) => show(t, 'Writing') });
+  runs.push(run);
+  let html = run.text;
+
+  for (let i = 0; run.finish === 'length' && i < MAX_CONTINUATIONS; i++) {
+    const draft = html;
+    run = await pass({
+      model,
+      messages: [...messages, { role: 'assistant', content: draft }, { role: 'user', content: CONTINUE(draft) }],
+      maxTokens: Math.round(budget / 3),
+      signal,
+      onText: (t) => show(draft + t, 'Continuing'),
+    });
+    runs.push(run);
+    html = draft + run.text;
+  }
+  const truncated = run.finish === 'length';
+
+  if (!truncated && !wellFormed(html)) {
+    run = await pass({
+      model,
+      messages: [
+        { role: 'system', content: REPAIR },
+        { role: 'user', content: html },
+      ],
+      maxTokens: Math.round(html.length / 3) + 300,
+      signal,
+      onText: (t) => show(t, 'Repairing'),
+    });
+    runs.push(run);
+    if (run.text.trim()) html = run.text;
+  }
+
+  if (!truncated && countLinks(html) < minLinks) {
+    const unlinked = html;
+    run = await pass({
+      model,
+      messages: [
+        { role: 'system', content: RELINK },
+        { role: 'user', content: unlinked },
+      ],
+      maxTokens: Math.round(unlinked.length / 3) + 600,
+      signal,
+      onText: (t) => show(t, 'Linking'),
+    });
+    runs.push(run);
+    // Kept only if the model did what was asked and returned a whole page.
+    if (run.finish !== 'length' && wellFormed(run.text) && countLinks(run.text) > countLinks(unlinked)) html = run.text;
+  }
+
+  const sum = (key) => runs.reduce((total, r) => total + r[key], 0);
+  const seconds = sum('seconds');
+  const outTokens = sum('outTokens');
+  const inTokens = sum('inTokens');
+  return {
+    html: html.trim(),
+    reasoning: runs.map((r) => r.reasoning).join('\n').trim().slice(0, 4000),
+    truncated,
+    metrics: {
+      model: model.id,
+      passes: runs.length,
+      ttft: runs[0].ttft,
+      seconds,
+      tps: seconds > 0 ? outTokens / seconds : 0,
+      inTokens,
+      outTokens,
+      cost: cost(model, inTokens, outTokens),
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ pages */
+
+export function generateArticle(topic, { signal, onUpdate } = {}) {
+  const style = STYLES[getSettings().style];
+  return compose({
+    system: ARTICLE(style.words),
+    user: articlePrompt(topic),
+    budget: style.budget,
+    minLinks: Math.ceil(style.words / 250), // fewer than this and the page is close to a dead end
+    signal,
+    onUpdate,
   });
 }
 
-function getModel() {
-  return localStorage.getItem('cerebras_model') || 'gpt-oss-120b';
-}
+const STARTER_COUNT = 6;
 
-const MODEL_PRICING = {
-  'zai-glm-4.6': { input: 2.25, output: 2.75 },
-  'gpt-oss-120b': { input: 0.35, output: 0.75 },
-  'llama3.1-8b': { input: 0.10, output: 0.10 },
-  'llama-3.3-70b': { input: 0.85, output: 1.20 },
-  'qwen-3-32b': { input: 0.40, output: 0.80 },
-  'qwen-3-235b-a22b-instruct-2507': { input: 0.60, output: 1.20 }
+// Shown when there is no model answer to show: no connection, or a reply that is not a clean list.
+const SPARE_STARTERS = [
+  'Lighthouse', 'Fermentation', 'Byzantine Empire', 'Tidal locking', 'Game theory', 'Mycelium',
+  'Damascus steel', 'Antikythera mechanism', 'Bioluminescence', 'Silk Road', 'Fibonacci sequence', 'Cuneiform',
+  'Plate tectonics', 'Gothic architecture', 'Polyphony', 'Aurora', 'Sourdough', 'Longitude',
+];
+
+const sample = (list, count) => {
+  const pool = [...list];
+  const picked = [];
+  while (picked.length < count && pool.length) {
+    picked.push(...pool.splice(Math.floor(Math.random() * pool.length), 1));
+  }
+  return picked;
 };
 
-function calculateCost(model, promptTokens, completionTokens) {
-  const pricing = MODEL_PRICING[model];
-  if (!pricing) return null;
-  
-  const inputCost = (promptTokens / 1_000_000) * pricing.input;
-  const outputCost = (completionTokens / 1_000_000) * pricing.output;
-  return (inputCost + outputCost).toFixed(6);
+export const spareStarters = () => sample(SPARE_STARTERS, STARTER_COUNT);
+
+/** The topics in a starters reply, or null when it is not a clean list of the right length. */
+export function parseStarters(text, count = STARTER_COUNT) {
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  // A topic is a short title: no list markers, markup or "Here are..." lead-in.
+  const clean = lines.every((line) => /^[\p{L}\p{N}][^<>:*#]{1,39}$/u.test(line) && !/^\d+[.)]\s/.test(line));
+  return clean && lines.length === count && new Set(lines).size === count ? lines : null;
 }
 
-function cleanAiResponse(content) {
-  let thinkBlock = '';
-  
-  // Extract <think> block if it exists (regardless of where it is)
-  const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/i);
-  if (thinkMatch) {
-    thinkBlock = thinkMatch[0]; // Keep the tags for Article.jsx to process
-    // Remove it from content to process the rest
-    content = content.replace(thinkMatch[0], '');
-  }
-
-  let htmlContent = content;
-
-  // 1. Try to find content inside ```html ... ```
-  const htmlBlockMatch = content.match(/```html([\s\S]*?)```/i);
-  if (htmlBlockMatch) {
-    htmlContent = htmlBlockMatch[1].trim();
-  } else {
-    // 2. Try to find content inside generic ``` ... ```
-    const genericBlockMatch = content.match(/```([\s\S]*?)```/i);
-    if (genericBlockMatch) {
-      htmlContent = genericBlockMatch[1].trim();
-    } else {
-      // 3. Fallback: strip start/end markers if they exist at the boundaries
-      htmlContent = content
-        .replace(/^```html\s*/i, '')
-        .replace(/^```\s*/i, '')
-        .replace(/\s*```$/i, '')
-        .trim();
-    }
-  }
-
-  // Reattach think block at the start
-  return thinkBlock ? `${thinkBlock}\n\n${htmlContent}` : htmlContent;
+/** Six places to start, written by the model for this page load. */
+export async function generateStarters({ signal } = {}) {
+  const model = getModel(getSettings().model);
+  const run = await pass({
+    model,
+    messages: [{ role: 'user', content: STARTERS(sample(FIELDS, STARTER_COUNT)) }],
+    maxTokens: 300,
+    temperature: 1,
+    signal,
+  });
+  return {
+    topics: parseStarters(run.text) ?? spareStarters(),
+    cost: cost(model, run.inTokens, run.outTokens),
+  };
 }
 
-const BASE_SYSTEM_PROMPT = `
-You are the engine of "LatentSpace", a recursive encyclopedia. 
-Your goal is to generate a Wikipedia-style article in valid HTML format based on the user's prompt (topic).
-
-**Hyperlink Strategy (The Context Chain):**
-- **CRITICAL:** You must include hyperlinks (<a href="#" data-prompt="..." class="text-blue-600 hover:underline font-medium transition-colors">Link Text</a>) for related concepts.
-- **Contextual Data-Prompt:** The \`data-prompt\` attribute MUST preserve the "Context Chain" of the journey.
-  - Format: \`Previous Context > Current Topic > New Concept\`
-  - Use " > " (chevrons) as the separator.
-  - Example: If the user is on "Apple > Macintosh", and you link "GUI", the data-prompt must be "Apple > Macintosh > GUI".
-  - This ensures that when the user clicks, the next generation knows exactly how they arrived there.
-- **Link Density:** Hyperlink aggressively. Every proper noun, technical term, or distinct concept should be a portal to a new page.
-- **MANDATORY LINKING:** You MUST wrap EVERY significant proper noun, technical term, entity, or concept in a link. Do not leave interesting terms as plain text. If it can be a page, link it.
-- **External Links:** If you reference a real-world website, source, or tool that exists outside the Latent Space (e.g., "GitHub", "OpenAI", "Wikipedia"), use a standard anchor tag: <a href="https://..." target="_blank" class="text-blue-600 hover:underline external-link">Link Text</a>.
-
-**Tone:**
-- Encyclopedic, authoritative, and exhaustive.
-- If the topic is abstract, treat it with the seriousness of a physical phenomenon.
-`;
-
-const STYLE_INSTRUCTIONS = {
-  short: `
-**Content Requirements:**
-1. **Length:** Concise and punchy (aim for 2,000 - 4,000 tokens). Focus on the core essence.
-2. **Structure:**
-   - A main title (h1) with class "text-3xl font-serif font-bold mb-4 border-b border-gray-300 pb-2".
-   - Short, crisp paragraphs (p) with class "mb-4 leading-relaxed text-gray-800".
-   - Section headings (h2) with class "text-xl font-serif font-bold mt-6 mb-3".
-   - Lists (ul/ol) with class "list-disc pl-6 mb-4 space-y-1".
-3. **Formatting:** Return ONLY the HTML content for the article body. Do NOT wrap in <html>, <head>, or <body> tags.
-`,
-  elaborative: `
-**Content Requirements:**
-1. **Length & Depth:** HIGHLY DETAILED, LONG-FORM (aim for 7,000 - 12,000 tokens). Do not summarize. Go deep into history, technical mechanisms, controversies, theoretical implications, and related fields.
-2. **Structure:**
-   - A main title (h1) with class "text-4xl font-serif font-bold mb-6 border-b-2 border-gray-800 pb-4".
-   - An optional infobox (div) floated to the right with class "float-right ml-8 mb-8 w-80 bg-gray-50 border border-gray-200 p-6 text-sm hidden lg:block shadow-sm rounded".
-   - Long, detailed paragraphs (p) with class "mb-6 leading-loose text-lg text-gray-800 font-light".
-   - Section headings (h2) with class "text-3xl font-serif font-bold mt-12 mb-6 border-b border-gray-300 pb-2".
-   - Sub-headings (h3) with class "text-2xl font-serif font-semibold mt-8 mb-4 text-gray-700".
-   - Lists (ul/ol) with class "list-disc pl-8 mb-6 space-y-3 text-lg".
-3. **Formatting:** Return ONLY the HTML content for the article body. Do NOT wrap in <html>, <head>, or <body> tags.
-`
-};
-
-export async function generateArticle(topic, history = [], style = 'elaborative') {
-  try {
-    const client = getClient();
-    
-    // Construct the prompt with history context
-    let prompt = `Generate a comprehensive article about: ${topic}`;
-    
-    // If the topic itself doesn't look like a chain, and we have history, append it for context
-    // But if the topic IS a chain (from a link click), we trust it.
-    const isChain = topic.includes(' > ');
-    if (!isChain && history.length > 0) {
-       const contextChain = history.join(' > ');
-       prompt += `\n\nContext Chain: ${contextChain} > ${topic}`;
-       prompt += `\n(Note: The user arrived here via this path. Ensure the content reflects this specific context.)`;
-    } else if (isChain) {
-       prompt += `\n\n(Note: This is a specific path in the latent space. Focus on the final concept in the context of the preceding chain.)`;
-    }
-
-    if (topic === "About LatentSpace") {
-      prompt = `
-        Generate a technical "About" page for "LatentSpace" as if it were an encyclopedia article about the software itself.
-        
-        **Key Technical Details to Include:**
-        - **Concept:** A recursive, generative encyclopedia where every article is hallucinated on the fly by an AI. It explores the "latent space" of the model.
-        - **Architecture:** Built with React and Vite for the frontend.
-        - **AI Engine:** Powered by the Cerebras Cloud SDK for ultra-fast inference.
-        - **State Management:** Uses a custom 'useHistory' hook to manage the navigation stack (push, pop, journey tracking).
-        - **Persistence:** Uses LocalStorage to save API keys, model selection, dark mode preference, and history.
-        - **Key Features:**
-          - **Latent Links:** Hyperlinks are generated with context (data-prompt) to guide the next generation, creating a coherent browsing path.
-          - **Journey Retrospective:** A visual summary of the user's browsing path generated by a "Cartographer" persona.
-          - **BYOK (Bring Your Own Key):** Client-side only architecture where the user provides their own Cerebras API key.
-          - **Reasoning Traces:** Visualizes the model's internal reasoning process (e.g., <think> tags) if available.
-          - **Dark Mode:** Global dark mode support with CSS overrides for generated content.
-        
-        Treat "LatentSpace" as a significant software project and write about it in the neutral, informative tone of the encyclopedia.
-      `;
-    }
-
-    const systemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${STYLE_INSTRUCTIONS[style] || STYLE_INSTRUCTIONS.elaborative}`;
-
-    const startTime = performance.now();
-    const completion = await client.chat.completions.create({
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: prompt }
-      ],
-      model: getModel(),
-      stream: false, 
-      max_tokens: 8192, // Explicitly allow for long generation
-      temperature: 0.7, // Slightly higher for more creative/diverse content
-    });
-    const endTime = performance.now();
-
-    const content = completion.choices[0].message.content;
-    const cleanContent = cleanAiResponse(content);
-    
-    const usage = completion.usage || {};
-    const totalTokens = usage.total_tokens || 0;
-    const completionTokens = usage.completion_tokens || 0;
-    const promptTokens = usage.prompt_tokens || 0;
-    const elapsedTime = (endTime - startTime) / 1000; // seconds
-    const tps = completionTokens > 0 && elapsedTime > 0 ? (completionTokens / elapsedTime).toFixed(2) : 'N/A';
-    const cost = calculateCost(getModel(), promptTokens, completionTokens);
-
-    return {
-      content: cleanContent,
-      metrics: {
-        totalTokens,
-        elapsedTime: elapsedTime.toFixed(2),
-        tps,
-        // For non-streaming, TTFT is essentially the full latency, but we'll just omit it or set it to elapsed
-        // The user asked for TTFT specifically. In non-streaming, TTFT ~= Total Time.
-        ttft: elapsedTime.toFixed(2),
-        cost
-      }
-    };
-  } catch (error) {
-    console.error("Error generating article:", error);
-    throw error;
-  }
-}
-
-export async function generateJourneySummary(journey) {
-  const journeyTopics = journey.map(j => j.topic).join(' → ');
-  
-  const JOURNEY_PROMPT = `
-    You are the "Cartographer of Latent Space". 
-    The user has just completed a journey through the following topics: ${journeyTopics}.
-    
-    Your goal is to generate a sophisticated "Expedition Report" in HTML using Tailwind CSS.
-    
-    **Structure & Design:**
-    
-    1.  **Header:**
-        - Title: "Journey Retrospective" (text-4xl font-serif font-bold mb-2).
-        - Subtitle: A poetic 1-sentence summary of the path taken (e.g., "From the digital abstraction of X to the biological reality of Y").
-    
-    2.  **The Visualization (The Path):**
-        - Create a vertical "Metro Line" style visualization.
-        - Use a continuous vertical border (border-l-2 border-gray-300 ml-4) to connect the steps.
-        - For each step in the journey:
-            - **Container:** A relative container with padding-left (pl-8) and margin-bottom (mb-8).
-            - **Node:** A circle on the line (absolute left-0 top-2 w-8 h-8 -ml-4 bg-white border-2 border-gray-800 rounded-full flex items-center justify-center text-xs font-bold) to mark the stop number.
-            - **Card:** A distinct card to the right containing:
-                - **Topic:** Large, bold, clickable link (<a href="#" data-prompt="Topic" class="text-xl font-bold hover:underline text-blue-600">Topic</a>).
-                - **Context:** A brief explanation of how this topic relates to the previous one (the "semantic bridge").
-                - **Flavor:** Invent a "Semantic Distance" score (e.g., "Drift: 12%") or "Concept Class" (e.g., "Abstract", "Physical", "Historical").
-    
-    3.  **The Analysis (The Pattern):**
-        - A distinct section titled "Semantic Analysis" (h2 text-2xl font-serif font-bold mt-12 mb-4).
-        - **CRITICAL:** Do NOT describe the "journey", "the path", "the start", or "the end". Do NOT use words like "began", "drifted", "shifted", or "progression". Do NOT mention the user.
-        - **Goal:** Write a single, deep philosophical or technical paragraph that unifies these topics into a coherent concept. Treat the topics as if they are components of a single hidden system. Explain the *relationship* between the concepts directly.
-        - **Style:** Abstract, academic, and profound.
-    
-    4.  **Future Trajectories (Next Steps):**
-        - A section titled "Suggested Expeditions" (h2 text-2xl font-serif font-bold mt-8 mb-4).
-        - Suggest 3 divergent paths for the next journey.
-        - Display these as attractive "Portal" cards (border p-4 rounded hover:bg-gray-50 transition).
-        - Each suggestion must be a clickable link with \`data-prompt\`.
-    
-    **Technical Constraints:**
-    - Return ONLY HTML.
-    - Use Tailwind CSS for all styling.
-    - **CRITICAL:** Ensure the vertical line aligns perfectly with the nodes. Use \`relative\` containers for the steps and \`absolute\` positioning for the dots.
-    - Do NOT use external images or SVGs that might break. Use CSS shapes.
-  `;
-
-  try {
-    const client = getClient();
-    const startTime = performance.now();
-    const completion = await client.chat.completions.create({
-      messages: [
-        { role: 'system', content: "You are a creative web designer and writer." },
-        { role: 'user', content: JOURNEY_PROMPT }
-      ],
-      model: getModel(),
-      stream: false,
-    });
-    const endTime = performance.now();
-
-    const content = completion.choices[0].message.content;
-    const cleanContent = cleanAiResponse(content);
-
-    const usage = completion.usage || {};
-    const totalTokens = usage.total_tokens || 0;
-    const completionTokens = usage.completion_tokens || 0;
-    const promptTokens = usage.prompt_tokens || 0;
-    const elapsedTime = (endTime - startTime) / 1000; // seconds
-    const tps = completionTokens > 0 && elapsedTime > 0 ? (completionTokens / elapsedTime).toFixed(2) : 'N/A';
-    const cost = calculateCost(getModel(), promptTokens, completionTokens);
-
-    return {
-      content: cleanContent,
-      metrics: {
-        totalTokens,
-        elapsedTime: elapsedTime.toFixed(2),
-        tps,
-        ttft: elapsedTime.toFixed(2),
-        cost
-      }
-    };
-  } catch (error) {
-    console.error("Error generating journey summary:", error);
-    throw error;
-  }
+export function generateJourney(topics, { signal, onUpdate } = {}) {
+  return compose({
+    system: CONTRACT,
+    user: JOURNEY(topics.map(leaf)),
+    budget: 500 + topics.length * 60,
+    signal,
+    onUpdate,
+  });
 }

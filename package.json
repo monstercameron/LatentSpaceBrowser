@@ -1,17 +1,13 @@
 {
   "name": "latentspacebrowser",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
+  "description": "A recursive, generative encyclopedia that browses the latent space of an LLM.",
+  "private": true,
   "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "@cerebras/cerebras_cloud_sdk": "^1.59.0",
-    "dotenv": "^17.2.3"
+  "scripts": {
+    "smoke": "node --env-file=.env index.js",
+    "dev": "npm --prefix web run dev",
+    "build": "npm --prefix web run build",
+    "test": "npm --prefix web test"
   }
 }

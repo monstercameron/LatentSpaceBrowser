@@ -1,23 +1,15 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import tailwindcss from 'tailwindcss'
-import autoprefixer from 'autoprefixer'
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
   base: './',
-  envDir: '../', // Load .env from the root directory
+  // A local .env in the repository root may hold VITE_APIKEY for development.
+  // It is only read by the dev server: production builds never include it.
+  envDir: '../',
   build: {
-    outDir: '../docs',
+    outDir: '../docs', // served by GitHub Pages
     emptyOutDir: true,
   },
-  css: {
-    postcss: {
-      plugins: [
-        tailwindcss,
-        autoprefixer,
-      ],
-    },
-  },
-})
+});

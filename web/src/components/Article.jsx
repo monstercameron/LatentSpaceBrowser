@@ -1,155 +1,77 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
-import DOMPurify from 'dompurify';
-import { SelectionPopup } from './SelectionPopup';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { renderPage } from '../lib/html.js';
+import { child } from '../lib/topics.js';
+import { SelectionPopup } from './SelectionPopup.jsx';
 
-export function Article({ topic, content, onNavigate }) {
-  const contentRef = useRef(null);
+const plainClick = (event) =>
+  event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+
+export function Article({ html, topic = '', onNavigate, journey = false }) {
+  const boxRef = useRef(null);
   const [selection, setSelection] = useState(null);
+  const safeHtml = useMemo(() => renderPage(html, topic, { rail: !journey }), [html, topic, journey]);
 
+  // Offer "Explore" for any text selected inside the page.
   useEffect(() => {
-    const handleSelection = () => {
-      const selection = window.getSelection();
-      if (!selection || selection.isCollapsed) {
+    const update = () => {
+      const selected = window.getSelection();
+      const text = selected?.toString().trim();
+      const box = boxRef.current;
+      if (!text || !box || selected.isCollapsed || !box.contains(selected.getRangeAt(0).commonAncestorContainer)) {
         setSelection(null);
         return;
       }
-
-      const text = selection.toString().trim();
-      if (!text) {
-        setSelection(null);
-        return;
-      }
-
-      const range = selection.getRangeAt(0);
-      
-      // Only show if selection is within our article
-      if (contentRef.current && contentRef.current.contains(range.commonAncestorContainer)) {
-        const rect = range.getBoundingClientRect();
-        const containerRect = contentRef.current.getBoundingClientRect();
-        
-        const newPosition = {
-          top: rect.top - containerRect.top,
-          left: rect.left - containerRect.left + (rect.width / 2)
-        };
-
-        setSelection(prev => {
-          if (prev && prev.text === text && 
-              Math.abs(prev.position.top - newPosition.top) < 2 && 
-              Math.abs(prev.position.left - newPosition.left) < 2) {
-            return prev;
-          }
-          return {
-            text,
-            position: newPosition
-          };
-        });
-      } else {
-        setSelection(null);
-      }
+      const rect = selected.getRangeAt(0).getBoundingClientRect();
+      const origin = box.getBoundingClientRect();
+      setSelection({
+        text: text.slice(0, 120),
+        top: rect.top - origin.top,
+        left: rect.left - origin.left + rect.width / 2,
+      });
     };
-
-    // Use mouseup/keyup instead of selectionchange to avoid rapid updates during drag
-    document.addEventListener('mouseup', handleSelection);
-    document.addEventListener('keyup', handleSelection);
-    
+    document.addEventListener('mouseup', update);
+    document.addEventListener('keyup', update);
     return () => {
-      document.removeEventListener('mouseup', handleSelection);
-      document.removeEventListener('keyup', handleSelection);
+      document.removeEventListener('mouseup', update);
+      document.removeEventListener('keyup', update);
     };
   }, []);
 
-  useEffect(() => {
-    const handleClick = (e) => {
-      // Check if the clicked element is an anchor tag
-      const link = e.target.closest('a');
-      if (link && contentRef.current.contains(link)) {
-        const href = link.getAttribute('href');
-        
-        // If it's an external link, let the browser handle it (open in new tab)
-        if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
-          return;
-        }
-
-        e.preventDefault();
-        // Use data-prompt if available (for contextual surfing), otherwise fallback to text content
-        const topic = link.getAttribute('data-prompt') || link.textContent.trim();
-        if (topic) {
-          onNavigate(topic);
-        }
-      }
-    };
-
-    const container = contentRef.current;
-    if (container) {
-      container.addEventListener('click', handleClick);
+  // Internal links are real URLs (so new-tab works) but a plain click stays in the app.
+  const followLink = (event) => {
+    // Contents links scroll within the page and leave the address bar alone.
+    const jump = event.target.closest('.toc a');
+    if (jump) {
+      event.preventDefault();
+      document.getElementById(jump.hash.slice(1))?.scrollIntoView();
+      return;
     }
+    const link = event.target.closest('a[data-topic]');
+    if (!link || !plainClick(event)) return;
+    event.preventDefault();
+    onNavigate(link.dataset.topic);
+  };
 
-    return () => {
-      if (container) {
-        container.removeEventListener('click', handleClick);
-      }
-    };
-  }, [onNavigate]);
-
-  // Sanitize HTML
-  const sanitizedContent = useMemo(() => {
-    // Process <think> tags before sanitization
-    let processedContent = content;
-    
-    // Replace <think> blocks with a collapsible details element
-    processedContent = processedContent.replace(
-      /<think>([\s\S]*?)<\/think>/gi, 
-      (match, innerContent) => {
-        return `
-          <details class="mb-6 border border-gray-200 rounded-lg bg-gray-50 overflow-hidden group">
-            <summary class="cursor-pointer p-3 text-xs font-mono text-gray-500 hover:bg-gray-100 select-none flex items-center gap-2 transition-colors">
-              <span class="transform group-open:rotate-90 transition-transform duration-200">▶</span>
-              <span>AI Thought Process</span>
-            </summary>
-            <div class="p-4 text-sm font-mono text-gray-600 border-t border-gray-200 bg-white whitespace-pre-wrap leading-relaxed">
-              ${innerContent.trim()}
-            </div>
-          </details>
-        `;
-      }
-    );
-
-    return DOMPurify.sanitize(processedContent, {
-      ADD_TAGS: ['details', 'summary'],
-      ADD_ATTR: ['target', 'class', 'data-prompt', 'open'], // Allow class for Tailwind and data-prompt for context
-    });
-  }, [content]);
-
-  // Post-process links to add external icons and security attributes
-  useEffect(() => {
-    if (!contentRef.current) return;
-
-    const links = contentRef.current.querySelectorAll('a');
-    links.forEach(link => {
-      const href = link.getAttribute('href');
-      if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
-        link.classList.add('external-link');
-        link.setAttribute('target', '_blank');
-        link.setAttribute('rel', 'noopener noreferrer');
-      }
-    });
-  }, [sanitizedContent]);
+  const clearSelection = () => {
+    window.getSelection()?.removeAllRanges();
+    setSelection(null);
+  };
+  const selectedTopic = selection ? child(topic, selection.text) : '';
 
   return (
-    <>
-      <div 
-        ref={contentRef}
-        className="prose max-w-none text-gray-800 leading-relaxed relative"
-        dangerouslySetInnerHTML={{ __html: sanitizedContent }}
-      />
+    <div ref={boxRef} className="relative">
+      <div className={journey ? 'article journey' : 'article'} onClick={followLink} dangerouslySetInnerHTML={{ __html: safeHtml }} />
       {selection && (
-        <SelectionPopup 
-          position={selection.position} 
-          selectedText={selection.text}
-          contextTopic={topic}
-          onNavigate={onNavigate}
+        <SelectionPopup
+          selection={selection}
+          href={`?topic=${encodeURIComponent(selectedTopic)}`}
+          onDone={clearSelection}
+          onExplore={() => {
+            clearSelection();
+            onNavigate(selectedTopic);
+          }}
         />
       )}
-    </>
+    </div>
   );
 }

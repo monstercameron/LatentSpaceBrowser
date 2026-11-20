@@ -1,16 +1,14 @@
 import { test, expect } from '@playwright/test';
 
-test('has styles', async ({ page }) => {
-  await page.goto('http://localhost:5173');
+test('home page renders with its styles', async ({ page }) => {
+  await page.goto('/');
 
-  // Check if the header has the correct background color (bg-white -> rgb(255, 255, 255))
-  const header = page.locator('header');
-  await expect(header).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(page).toHaveTitle(/LatentSpace/);
+  await expect(page.getByRole('heading', { name: 'Welcome to LatentSpace' })).toBeVisible();
+  await expect(page.getByRole('searchbox', { name: 'Search any topic' })).toBeVisible();
 
-  // Check if the body has the correct background color (bg-gray-100 -> rgb(243, 244, 246))
-  const body = page.locator('body');
-  await expect(body).toHaveCSS('background-color', 'rgb(243, 244, 246)');
-  
-  // Check if the title is correct
-  await expect(page).toHaveTitle(/LatentSpace Search Engine/);
+  // The paper background comes from the --paper variable (#f6f3ec in light mode).
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.reload();
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(246, 243, 236)');
 });
