@@ -27,7 +27,11 @@ export const STYLES = {
   elaborative: { label: 'Elaborative', hint: 'about 1,300 words', words: 1300, budget: 4200 },
 };
 
-export const getModel = (id) => MODELS.find((m) => m.id === id) ?? MODELS[0];
+// Used when no model is saved, or the saved one is no longer offered.
+export const DEFAULT_MODEL = 'qwen-3.8-27b';
+
+export const getModel = (id) =>
+  MODELS.find((m) => m.id === id) ?? MODELS.find((m) => m.id === DEFAULT_MODEL) ?? MODELS[0];
 
 export const cost = (model, inTokens, outTokens) =>
   (inTokens * model.input + outTokens * model.output) / 1_000_000;

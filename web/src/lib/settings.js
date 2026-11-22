@@ -1,4 +1,4 @@
-import { MODELS, STYLES } from '../services/models.js';
+import { DEFAULT_MODEL, MODELS, STYLES, getModel } from '../services/models.js';
 
 // Storage keys are unchanged from earlier versions so saved settings carry over.
 const KEYS = {
@@ -44,7 +44,7 @@ export function getSettings() {
   const style = read(KEYS.style);
   return {
     apiKey: read(KEYS.apiKey),
-    model: MODELS.some((m) => m.id === model) ? model : MODELS[0].id,
+    model: MODELS.some((m) => m.id === model) ? model : getModel(DEFAULT_MODEL).id,
     style: style in STYLES ? style : 'elaborative',
     textSize: getTextSize(),
   };

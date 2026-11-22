@@ -69,7 +69,7 @@ test('wellFormed: decides whether the model must repair its reply', () => {
 
 test('cost: priced per million tokens', () => {
   assert.equal(cost(getModel('qwen-3.8-27b'), 1_000_000, 1_000_000), 0.99 + 1.49);
-  assert.equal(getModel('retired-model').id, 'gpt-oss-120b');
+  assert.equal(getModel('retired-model').id, 'qwen-3.8-27b');
 });
 
 test('parseStarters: accepts only a clean list of six distinct topics', () => {
