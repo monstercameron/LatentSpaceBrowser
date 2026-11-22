@@ -1,0 +1,183 @@
+/* Astryx first, in the order its docs give: fonts, reset, components, theme. */
+@import '@astryxdesign/theme-neutral/fonts.css';
+@import '@astryxdesign/core/reset.css';
+@import '@astryxdesign/core/astryx.css';
+@import '@astryxdesign/theme-neutral/theme.css';
+
+/*
+ * Everything below only lays the page out. Colors, type and controls come from Astryx.
+ * This file is unlayered on purpose: it wins over Astryx's layers where it overrides them.
+ */
+
+:root {
+  --reading-size: 1.125rem; /* article text size, set from Settings */
+  --reading-leading: 1.65;
+  --reading-font: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+}
+
+/*
+ * The warm paper palette, kept from the first version, laid over Astryx's tokens. Each value is
+ * [light, dark]. Astryx's Theme sets its tokens on its own wrapper element, below :root, so the
+ * palette is applied there too or it never reaches the components.
+ */
+:root,
+[data-astryx-theme] {
+  --color-background-body: light-dark(#f6f3ec, #131210);
+  --color-background-surface: light-dark(#fffdf9, #1b1a17);
+  --color-text-primary: light-dark(#1f1b16, #ebe6dc);
+  --color-text-secondary: light-dark(#565046, #b3aa9b);
+  --color-accent: light-dark(#8a3a0a, #f0a35e);
+  --color-text-accent: light-dark(#8a3a0a, #f0a35e); /* what links and accent text read */
+  --color-icon-accent: light-dark(#8a3a0a, #f0a35e);
+  --color-border: light-dark(#e4ddd0, #302d28);
+}
+:root[data-text='small'] { --reading-size: 1rem; }
+:root[data-text='large'] { --reading-size: 1.3rem; }
+@media (max-width: 639px) {
+  :root { --reading-size: 1.0625rem; }
+  :root[data-text='small'] { --reading-size: 0.9375rem; }
+  :root[data-text='large'] { --reading-size: 1.1875rem; }
+}
+
+body { margin: 0; }
+
+/* Painted inside Astryx's theme wrapper, so the page follows the app's light/dark mode. */
+.app {
+  overflow-x: clip; /* the launchpad's glow is wider than the page */
+  min-height: 100vh;
+  background: var(--color-background-body);
+  color: var(--color-text-primary);
+}
+
+/* The page frame: an optional trail on the left, then the reading area. */
+.stage {
+  display: grid;
+  gap: 24px;
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 20px 16px 8px;
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 1000px) {
+  .stage.has-trail { grid-template-columns: 250px minmax(0, 1fr); }
+}
+.trail-col { align-self: start; }
+@media (min-width: 1000px) {
+  .trail-col { position: sticky; top: 72px; }
+}
+
+.search { width: min(560px, 100%); }
+
+/* Reading */
+.reader-page { display: grid; gap: 16px; }
+.reader {
+  display: grid;
+  gap: 28px;
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 900px) {
+  .reader { grid-template-columns: minmax(0, 44rem) 16rem; justify-content: center; }
+}
+.reader-main { position: relative; min-width: 0; }
+.rail { display: grid; gap: 16px; align-self: start; }
+@media (min-width: 900px) {
+  .rail { position: sticky; top: 72px; }
+}
+.article { display: flex; flex-direction: column; margin-top: 8px; }
+.article .prose,
+.latent-list li {
+  font-family: var(--reading-font);
+  font-size: var(--reading-size);
+  line-height: var(--reading-leading);
+}
+.article .prose { margin: 0 0 0.95em; }
+.latent-list { margin-bottom: 0.95em; }
+
+/* Every word of an A2UI page is its own element, so new words can arrive one by one. */
+.w { display: inline-block; }
+.lw { display: inline; }
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-inline-start: 3px;
+  vertical-align: -0.15em;
+  border-radius: 1px;
+  background: var(--color-text-accent);
+  box-shadow: 0 0 12px 1px color-mix(in srgb, var(--color-text-accent) 55%, transparent);
+}
+
+/* A link underlines itself with a drawn line, so the line can be animated and can thicken on hover. */
+.latent-link {
+  text-decoration: none;
+  padding-bottom: 1px;
+  background: linear-gradient(currentColor, currentColor) no-repeat 0 100% / 100% 1px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: background-size 0.25s ease;
+}
+.latent-link:hover { background-size: 100% 2px; }
+.reader-main .astryx-heading { font-family: var(--reading-font); }
+.article h2.astryx-heading { margin-top: 1.1em; }
+/* A sub-section sits inside its section: italic and a little tighter, but never smaller than the text
+   it introduces (the Astryx heading is 14px, the reading text 18px, so it is sized from the text). */
+.article h3.astryx-heading { margin: 1em 0 0.1em; font-size: var(--reading-size); font-style: italic; font-weight: 600; line-height: 1.3; }
+.contents li.sub { margin-inline-start: 0.9em; font-size: 0.92em; list-style-type: circle; }
+.latent-list { margin: 0 0 0.95em; padding-inline-start: 1.4em; }
+.reader-main .stage { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.reader-main .stage::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* Tables and code: only pages that contain them draw these (the HTML path can write both). */
+.latent-table-wrap { overflow-x: auto; margin: 0 0 1em; }
+.latent-table { border-collapse: collapse; font-size: 0.9em; font-family: var(--reading-font); }
+.latent-table th, .latent-table td { border: 1px solid var(--color-border); padding: 5px 12px; text-align: start; vertical-align: top; }
+.latent-table th { color: var(--color-text-secondary); font-weight: 600; }
+.latent-code { margin: 0 0 1em; padding: 12px 16px; overflow-x: auto; font-size: 0.88em; line-height: 1.5; border-radius: 8px; background: color-mix(in srgb, var(--color-text-primary) 7%, transparent); }
+.latent-code-inline { font-size: 0.88em; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--color-text-primary) 8%, transparent); }
+
+.lens { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.lens ol { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.lens li { display: inline-flex; align-items: center; gap: 4px; }
+
+.contents ol { margin: 8px 0 0; padding-inline-start: 1.2em; display: grid; gap: 4px; }
+.contents a { color: inherit; }
+
+.receipt { margin-top: 24px; border-top: 1px solid var(--color-border, rgba(127, 127, 127, 0.3)); padding-top: 8px; }
+.skeleton { display: grid; gap: 14px; margin-top: 12px; }
+
+.selection-explore { position: absolute; z-index: 5; transform: translate(-50%, -125%); }
+
+/* The trail */
+.trail { list-style: none; margin: 12px 0; padding: 0; max-height: 60vh; overflow: auto; display: grid; gap: 2px; }
+.trail-row {
+  all: unset;
+  position: relative;
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  line-height: 1.3;
+}
+.trail-row:hover { background: rgba(127, 127, 127, 0.14); }
+.trail-row:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
+.trail-row[aria-current='page'] { background: rgba(127, 127, 127, 0.22); font-weight: 600; }
+.trail-row .dim { opacity: 0.6; }
+.trail-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Launchpad */
+.launchpad { position: relative; isolation: isolate; display: grid; gap: 16px; max-width: 42rem; margin: 40px auto; justify-items: start; }
+.starters, .recent ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.recent { display: grid; gap: 8px; margin-top: 12px; }
+
+.settings { padding: 0 24px 24px; }
+.foot { display: flex; justify-content: center; padding: 8px 16px 32px; }
