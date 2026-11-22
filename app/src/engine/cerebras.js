@@ -1,6 +1,4 @@
-import { cost, getModel } from './models.js';
-
-const API_URL = 'https://api.cerebras.ai/v1/chat/completions';
+import { cacheEffect, cost, getModel, PROVIDERS } from './models.js';
 
 /**
  * A failed call. `message` is English, for logs and as a fallback; `code` names what went wrong so the
@@ -18,13 +16,13 @@ export class ApiError extends Error {
 }
 
 const REASONS = {
-  401: ['rejected', 'Cerebras rejected the API key.'],
-  403: ['forbidden', 'This API key is not allowed to use that model.'],
-  404: ['model', 'That model is not available for this API key.'],
-  429: ['rate', 'Rate limit reached. Wait a moment and try again.'],
+  401: ['rejected', (p) => `${p} rejected the API key.`],
+  403: ['forbidden', () => 'This API key is not allowed to use that model.'],
+  404: ['model', () => 'That model is not available for this API key.'],
+  429: ['rate', () => 'Rate limit reached. Wait a moment and try again.'],
 };
 
-async function toError(res) {
+async function toError(res, provider) {
   let detail = '';
   try {
     const body = await res.json();
@@ -32,8 +30,8 @@ async function toError(res) {
   } catch {
     // no JSON body
   }
-  const [code, reason] = REASONS[res.status] ?? ['server', `Cerebras returned an error (${res.status}).`];
-  return new ApiError(reason, res.status, code, detail);
+  const [code, reason] = REASONS[res.status] ?? ['server', (p) => `${p} returned an error (${res.status}).`];
+  return new ApiError(reason(provider), res.status, code, detail);
 }
 
 async function* serverEvents(res) {
@@ -61,32 +59,38 @@ async function* serverEvents(res) {
  * `onText` receives the whole text so far each time it grows.
  */
 export async function chat({ apiKey, modelId, messages, maxTokens, temperature = 0.7, signal, onText }) {
-  if (!apiKey) throw new ApiError('Add your Cerebras API key in Settings to start exploring.', 401, 'key');
   const model = getModel(modelId);
+  const provider = PROVIDERS[model.provider];
+  if (!apiKey) throw new ApiError(`Add your ${provider.name} API key in Settings to start exploring.`, 401, 'key');
 
   const started = performance.now();
   let res;
   try {
-    res = await fetch(API_URL, {
+    res = await fetch(provider.url, {
       method: 'POST',
       signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: model.id,
-        messages,
-        stream: true,
-        max_completion_tokens: maxTokens,
-        temperature,
-        reasoning_effort: model.effort,
-      }),
+      body: JSON.stringify(
+        model.provider === 'openai'
+          ? {
+            // reasoning counts inside the cap, so the cap leaves room for it; these models take no temperature
+            model: model.api ?? model.id,
+            messages,
+            stream: true,
+            stream_options: { include_usage: true },
+            max_completion_tokens: maxTokens + (model.room ?? 0),
+            reasoning_effort: model.effort,
+          }
+          : { model: model.id, messages, stream: true, max_completion_tokens: maxTokens, temperature, reasoning_effort: model.effort },
+      ),
     });
   } catch (error) {
     if (error.name === 'AbortError') throw error;
     // Cerebras sends no CORS headers on a rejected key, so the browser reports
     // that case exactly like a dropped connection.
-    throw new ApiError('No answer from Cerebras. The connection dropped or the API key was rejected: check the key in Settings.', 0, 'network');
+    throw new ApiError(`No answer from ${provider.name}. The connection dropped or the API key was rejected: check the key in Settings.`, 0, 'network');
   }
-  if (!res.ok) throw await toError(res);
+  if (!res.ok) throw await toError(res, provider.name);
 
   let text = '';
   let reasoning = '';
@@ -108,6 +112,8 @@ export async function chat({ apiKey, modelId, messages, maxTokens, temperature =
   const ended = performance.now();
   const inTokens = usage?.prompt_tokens ?? 0;
   const outTokens = usage?.completion_tokens ?? 0;
+  // Prompt tokens the provider served from its cache (and, for OpenAI, stored in it): billed at different rates.
+  const cache = { cached: usage?.prompt_tokens_details?.cached_tokens ?? 0, written: usage?.prompt_tokens_details?.cache_write_tokens ?? 0 };
   return {
     text,
     reasoning,
@@ -117,6 +123,9 @@ export async function chat({ apiKey, modelId, messages, maxTokens, temperature =
     seconds: (ended - started) / 1000,
     inTokens,
     outTokens,
-    cost: cost(model, inTokens, outTokens),
+    cost: cost(model, inTokens, outTokens, cache),
+    cachedTokens: cache.cached,
+    writtenTokens: cache.written,
+    cacheEffect: cacheEffect(model, cache), // dollars saved (negative: the cost of writing the cache)
   };
 }

@@ -14,7 +14,8 @@ import { ensure, forget, has, unusedPrefetchCost } from '../state/cache.js';
 import { stopsTo, treeRows } from '../state/journey.js';
 import { translatePage } from '../engine/translatePage.js';
 import { summarize } from '../engine/pipeline.js';
-import { currentLanguage, engineSettings, getApiKey, saveSettings, useSettings } from '../state/settings.js';
+import { keyFor } from '../engine/models.js';
+import { currentLanguage, engineSettings, keysReady, saveSettings, useSettings } from '../state/settings.js';
 import { overBudget, useSpend } from '../state/spend.js';
 import { languageKey, lensOf, pageKey, urlFor } from '../state/topics.js';
 import { useJourney } from '../state/useJourney.js';
@@ -82,7 +83,7 @@ export default function App() {
     });
     return off;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `journey.fill` is stable; the rest is named
-  }, [current?.id, needsWriting, lensKey, attempt, settings.model, settings.linkModel, settings.depth, settings.apiKey, settings.language, settings.a11y]);
+  }, [current?.id, needsWriting, lensKey, attempt, settings.model, settings.linkModel, settings.depth, settings.apiKey, settings.openaiKey, settings.language, settings.a11y]);
 
   const retry = () => {
     if (!current) return;
@@ -131,7 +132,7 @@ export default function App() {
     const node = current;
     const key = wantKey;
     const s = engineSettings();
-    if (!s.apiKey) return setTrError({ id: node.id, key, message: t('error.key') });
+    if (!keysReady(s)) return setTrError({ id: node.id, key, message: t('error.key') });
     const source = node.page.format === 'html' ? node.page.html : node.page.compact;
     const entryKey = `tr|${node.id}|${key}|${s.model}|${s.linkModel}|${source.length}:${node.page.metrics.cost}`;
     if (!has(entryKey) && overBudget(settings.budget)) return setTrError({ id: node.id, key, message: t('error.budget') });
@@ -156,7 +157,7 @@ export default function App() {
     if (finished) off();
     translateBy.current += 1;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the page, its target language and the models are the inputs
-  }, [current?.id, translating, wantKey, settings.model, settings.linkModel, settings.apiKey, attempt]);
+  }, [current?.id, translating, wantKey, settings.model, settings.linkModel, settings.apiKey, settings.openaiKey, attempt]);
 
 
   // Search box follows the page being shown.
@@ -178,7 +179,7 @@ export default function App() {
   const language = currentLanguage();
   useEffect(() => {
     const s = engineSettings();
-    applyLanguage(language, { apiKey: s.apiKey, modelId: s.model });
+    applyLanguage(language, { apiKey: keyFor(s, s.model), modelId: s.model });
     document.documentElement.lang = language.code ?? '';
     document.documentElement.dir = language.rtl ? 'rtl' : 'ltr';
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `language` is derived from these two settings
@@ -234,7 +235,7 @@ export default function App() {
       hoverTimer.current = setTimeout(() => {
         const s = engineSettings();
         const lens = lensOf(state.nodes, state.currentId);
-        if (!s.apiKey || overBudget(settings.budget)) return;
+        if (!keysReady(s) || overBudget(settings.budget)) return;
         ensure(
           pageKey({ topic, lens }, s),
           (onEvent) => runPage({ node: { kind: 'page', topic, lens }, settings: s, onEvent }),
@@ -262,7 +263,7 @@ export default function App() {
     error,
     spend,
     budget: settings.budget,
-    hasKey: Boolean(getApiKey()),
+    hasKey: keysReady(),
     translating: translating && !trFailed,
     canGoBack: journey.canGoBack,
     canGoForward: journey.canGoForward,
@@ -357,6 +358,7 @@ export default function App() {
                 onJump={jump}
                 onRetro={() => open({ kind: 'retro', topic: t('retro.title'), stops })}
                 onClear={journey.reset}
+                onRemove={journey.remove}
               />
             </aside>
           )}
@@ -395,7 +397,7 @@ export default function App() {
               />
             ) : (
               <Launchpad
-                hasKey={Boolean(getApiKey())}
+                hasKey={keysReady()}
                 languageId={languageKey(engineSettings())}
                 journeys={journeys}
                 onOpen={search}

@@ -8,7 +8,8 @@ import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { VStack } from '@astryxdesign/core/VStack';
 import { describeLanguage } from '../engine/translate.js';
-import { DEPTHS, MODELS } from '../engine/models.js';
+import { DEPTHS, EFFORTS, MODELS, OPENAI_PRESETS, keyFor, openAiModel } from '../engine/models.js';
+import { useOpenAiModels } from '../state/openaiModels.js';
 import { applyLanguage, useT } from '../i18n/index.js';
 import { CUSTOM, LANGUAGES, resolveLanguage } from '../i18n/languages.js';
 import { engineSettings, saveSettings, useSettings } from '../state/settings.js';
@@ -50,9 +51,9 @@ function CustomLanguage({ settings, t, focus }) {
     setStatus({ kind: 'working', text: t('settings.languageWorking', { name }) });
     try {
       const s = engineSettings();
-      const info = await describeLanguage({ apiKey: s.apiKey, modelId: s.model, text: name });
+      const info = await describeLanguage({ apiKey: keyFor(s, s.model), modelId: s.model, text: name });
       const language = resolveLanguage(CUSTOM, info);
-      const result = await applyLanguage(language, { apiKey: s.apiKey, modelId: s.model });
+      const result = await applyLanguage(language, { apiKey: keyFor(s, s.model), modelId: s.model });
       if (!result.ok) throw new Error(result.message);
       addSpend((info.cost ?? 0) + (result.cost ?? 0));
       saveSettings({ language: CUSTOM, customLanguage: { name: info.name, native: info.native, code: info.code, rtl: info.rtl } });
@@ -90,7 +91,20 @@ function CustomLanguage({ settings, t, focus }) {
 export function SettingsDialog({ onClose, focusLanguage }) {
   const settings = useSettings();
   const t = useT();
-  const modelOptions = MODELS.map((m) => ({ value: m.id, label: m.label, description: t(`model.${m.id}`) }));
+  // Cerebras's models, then every OpenAI model the key can use (from OpenAI's own list) at each reasoning effort,
+  // newest first. A model already chosen stays in the list even if the list no longer has it.
+  const openaiKey = settings.openaiKey || engineSettings().openaiKey; // the reader's key, or a developer's local one
+  const openai = useOpenAiModels(openaiKey);
+  const listed = openai.models.flatMap((m) => EFFORTS.filter((e) => e !== 'none').map((e) => `${m.id}:${e}`));
+  const chosen = [settings.model, settings.linkModel].filter((id) => openAiModel(id));
+  const openAiIds = [...new Set([...listed, ...chosen, ...OPENAI_PRESETS])];
+  const modelOptions = [
+    ...MODELS.filter((m) => m.provider === 'cerebras').map((m) => ({ value: m.id, label: m.label, description: t(`model.${m.id}`) })),
+    ...openAiIds.map((id) => {
+      const m = openAiModel(id);
+      return { value: id, label: m.label, description: m.estimated ? t('model.estimated', { in: m.input, out: m.output }) : t('model.openai', { in: m.input, out: m.output }) };
+    }),
+  ];
   return (
     <Dialog isOpen onOpenChange={(open) => !open && onClose()} width={540} purpose="form">
       <DialogHeader title={t('settings.title')} onOpenChange={(open) => !open && onClose()} />
@@ -114,6 +128,22 @@ export function SettingsDialog({ onClose, focusLanguage }) {
             placeholder="csk-…"
             onChange={(apiKey) => saveSettings({ apiKey })}
           />
+          <TextInput
+            type="password"
+            label={t('settings.openaiKey')}
+            description={t('settings.openaiKeyHint')}
+            value={settings.openaiKey}
+            placeholder="sk-…"
+            onChange={(openaiKey) => saveSettings({ openaiKey })}
+          />
+          {openaiKey && (
+            <div className="lang-apply">
+              <Button label={t('settings.modelsRefresh')} size="sm" variant="secondary" isDisabled={openai.busy} onClick={openai.refresh} />
+              <Text type="supporting" color="secondary" role="status">
+                {openai.busy ? t('settings.modelsLoading') : openai.error ? t('settings.modelsFailed', { message: openai.error }) : t('settings.modelsCount', { n: openai.models.length })}
+              </Text>
+            </div>
+          )}
           <Selector label={t('settings.model')} options={modelOptions} value={settings.model} onChange={(model) => model && saveSettings({ model })} />
           <SegmentedControl label={t('settings.format')} value={settings.format} onChange={(format) => saveSettings({ format })}>
             <SegmentedControlItem value="a2ui" label={t('settings.formatA2ui')} />

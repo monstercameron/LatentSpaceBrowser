@@ -51,3 +51,7 @@ The app registers tools with the browser's [WebMCP](https://developer.chrome.com
 `get_trail`, `get_status` and `set_preferences`. The tools are in `src/agent/`. Each page an agent opens is a paid
 call, so they refuse without an API key or past the spending limit; the key and the limit can be neither read nor
 changed through them. Where WebMCP is not supported the same tools are still on `window.__latentspaceTools`.
+
+## The trail
+
+Every row in the Trail has a fold arrow (when pages grew from it) and a × that deletes that page and everything after it; on the first page of a journey that deletes the whole trail. "Collapse all" and "Expand all" fold every branch at once. Fold state is kept for the session, and arriving at a folded page unfolds the way to it.

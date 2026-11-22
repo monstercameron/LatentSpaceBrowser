@@ -1,4 +1,5 @@
 import { chat } from './cerebras.js';
+import { keyFor } from './models.js';
 import { describe } from './pipeline.js';
 import { parseA11y } from './a11y.js';
 import { expandCompact } from './compact.js';
@@ -69,7 +70,7 @@ export async function translatePage({ page, settings, signal }) {
 
   const [body, notes] = await Promise.all([
     chat({
-      apiKey: settings.apiKey,
+      apiKey: keyFor(settings, settings.model),
       modelId: settings.model,
       messages: [{ role: 'system', content: system(language, format) }, { role: 'user', content: source }],
       maxTokens: budget,
@@ -78,7 +79,7 @@ export async function translatePage({ page, settings, signal }) {
     }),
     page.a11y
       ? chat({
-        apiKey: settings.apiKey,
+        apiKey: keyFor(settings, settings.linkModel),
         modelId: settings.linkModel,
         messages: [{ role: 'system', content: A11Y_SYSTEM(language) }, { role: 'user', content: a11yLines(page.a11y) }],
         maxTokens: 2400,

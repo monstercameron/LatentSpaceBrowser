@@ -195,3 +195,97 @@ test('cache: subscribers hear the draft as it grows and see where the write is t
   entry.subscribe((s) => late.push(s.draft?.text));
   assert.deepEqual(late, ['ignored']);
 });
+
+import { MODELS, PROVIDERS, cost, getModel, keyFor } from '../src/engine/models.js';
+
+test('models: each belongs to a provider, OpenAI ones are named by their api id, and keys follow the provider', () => {
+  for (const m of MODELS) assert.ok(PROVIDERS[m.provider], m.id);
+  const terra = getModel('gpt-6.1-terra:medium');
+  assert.equal(terra.api, 'gpt-6.1-terra');
+  assert.equal(terra.effort, 'medium');
+  const keys = { apiKey: 'csk-1', openaiKey: 'sk-2' };
+  assert.equal(keyFor(keys, 'qwen-3.8-27b'), 'csk-1');
+  assert.equal(keyFor(keys, 'gpt-6-luna:high'), 'sk-2');
+  assert.equal(keyFor({ apiKey: 'csk-1' }, 'gpt-6-luna:high'), '');
+  assert.ok(Math.abs(cost(terra, 1_000_000, 1_000_000) - 6) < 1e-9);
+});
+
+import { isUsable, pickModels, prettyName, versionOf } from '../src/engine/openaiModels.js';
+import { isModelId, openAiModel } from '../src/engine/models.js';
+
+test('openai list: only recent text models, snapshots folded, newest first', () => {
+  const reply = { data: [
+    { id: 'gpt-6.2-sol', created: 300 }, { id: 'gpt-6.1-terra', created: 200 }, { id: 'gpt-6-luna', created: 250 },
+    { id: 'gpt-6.1-terra-2026-10-26', created: 201 }, { id: 'gpt-5.5-pro', created: 100 }, { id: 'gpt-5.3-codex', created: 90 },
+    { id: 'gpt-4o', created: 50 }, { id: 'gpt-image-2', created: 400 }, { id: 'gpt-live-1.1', created: 500 }, { id: 'gpt-realtime-2', created: 450 }, { id: 'whisper-1', created: 1 },
+  ] };
+  assert.deepEqual(pickModels(reply).map((m) => m.id), ['gpt-6.2-sol', 'gpt-6-luna', 'gpt-6.1-terra']);
+  assert.equal(pickModels(reply, 2).length, 2);
+  assert.equal(versionOf('gpt-6.1-terra'), 6);
+  assert.equal(isUsable('gpt-4.1'), false);
+  assert.equal(prettyName('gpt-6.2-sol'), 'GPT 6.2 Sol');
+});
+
+test('openai ids: any listed model at an effort is a model, priced if known and estimated if not', () => {
+  assert.equal(isModelId('gpt-6.2-sol:high'), true);
+  assert.equal(isModelId('gpt-6.2-sol:minimal'), false);
+  assert.equal(isModelId('nonsense'), false);
+  const known = openAiModel('gpt-6-luna:high');
+  assert.equal(known.estimated, false);
+  assert.equal(known.output, 0.5);
+  const fresh = openAiModel('gpt-7-nova:medium');
+  assert.equal(fresh.estimated, true);
+  assert.equal(fresh.api, 'gpt-7-nova');
+  assert.equal(fresh.effort, 'medium');
+  assert.equal(getModel('gpt-6.2-sol:low').provider, 'openai');
+});
+
+import { cacheEffect } from '../src/engine/models.js';
+
+test('cost: cached prompt tokens are billed at the cached rate and written ones at the write rate', () => {
+  const terra = getModel('gpt-6.1-terra:medium');
+  assert.equal(terra.input, 1);
+  assert.equal(terra.cached, 0.05);
+  assert.equal(terra.write, 1.25);
+  // 10,000 prompt tokens, 4,000 read from the cache, 1,000 written, 500 out
+  const bill = cost(terra, 10_000, 500, { cached: 4000, written: 1000 });
+  assert.ok(Math.abs(bill - (5000 * 1 + 4000 * 0.05 + 1000 * 1.25 + 500 * 5) / 1e6) < 1e-12);
+  assert.ok(Math.abs(cacheEffect(terra, { cached: 4000 }) - (4000 * 0.95) / 1e6) < 1e-12);
+  assert.ok(cacheEffect(terra, { written: 1000 }) < 0); // writing costs more than it saves until it is read
+  assert.equal(cost(terra, 1000, 0), 1000 / 1e6); // no cache fields: the plain rate
+  const qwen = getModel('qwen-3.8-27b');
+  assert.equal(cacheEffect(qwen, { cached: 5000 }), 0); // Cerebras caching is not discounted
+  assert.equal(getModel('gpt-6.2-astra:low').output, 40);
+});
+
+import { subtreeIds, visibleRows } from '../src/state/journey.js';
+
+const tree = () => {
+  const n = (id, parentId) => ({ id, topic: id, parentId, lens: [] });
+  return { nodes: { a: n('a', null), b: n('b', 'a'), c: n('c', 'b'), d: n('d', 'a'), e: n('e', null) }, order: ['a', 'b', 'c', 'd', 'e'], currentId: 'c' };
+};
+
+test('trail: deleting a page deletes what grew from it, and moves the reader out if they were inside', () => {
+  assert.deepEqual(subtreeIds(tree(), 'b'), ['b', 'c']);
+  assert.deepEqual(subtreeIds(tree(), 'a'), ['a', 'b', 'd', 'c']);
+  const branch = journeyReducer(tree(), { type: 'remove', id: 'b' });
+  assert.deepEqual(branch.order, ['a', 'd', 'e']);
+  assert.equal(branch.currentId, null); // the reader was on c, inside the deleted branch
+  const whole = journeyReducer(tree(), { type: 'remove', id: 'a' });
+  assert.deepEqual(whole.order, ['e']);
+  assert.deepEqual(Object.keys(whole.nodes), ['e']);
+  const other = journeyReducer({ ...tree(), currentId: 'e' }, { type: 'remove', id: 'a' });
+  assert.equal(other.currentId, 'e'); // elsewhere: stays put
+  assert.equal(journeyReducer(tree(), { type: 'remove', id: 'zzz' }).order.length, 5);
+});
+
+test('trail: folding hides everything under a page and counts it', () => {
+  const rows = [['a', 0], ['b', 1], ['c', 2], ['d', 1], ['e', 0]].map(([id, depth]) => ({ node: { id }, depth }));
+  assert.deepEqual(visibleRows(rows, new Set()).map((r) => r.node.id), ['a', 'b', 'c', 'd', 'e']);
+  const folded = visibleRows(rows, new Set(['a']));
+  assert.deepEqual(folded.map((r) => r.node.id), ['a', 'e']);
+  assert.equal(folded[0].below, 3);
+  assert.equal(folded[0].folded, true);
+  assert.deepEqual(visibleRows(rows, new Set(['b'])).map((r) => r.node.id), ['a', 'b', 'd', 'e']);
+  assert.equal(visibleRows(rows, new Set(['e']))[4].folded, false); // a page with nothing under it cannot fold
+});

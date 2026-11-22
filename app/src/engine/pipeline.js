@@ -1,14 +1,14 @@
 import { applyLinkPhrases, expandCompact, linkPassPrompt } from './compact.js';
 import { ApiError, chat } from './cerebras.js';
 import { cleanHtmlReply, wellFormed } from './html.js';
-import { DEFAULT_DEPTH, DEPTHS } from './models.js';
+import { DEFAULT_DEPTH, DEPTHS, keyFor } from './models.js';
 import { a11ySystem, FIELDS, htmlSystem, journeySystem, journeyUser, linksSystem, pageSystem, pageUser, startersUser } from './prompts.js';
 import { parseA11y } from './a11y.js';
 
 /** What a page records about the language it was written in, so it can be drawn with the right `lang` and direction. */
 const langInfo = (lang) => (lang ? { code: lang.code ?? null, rtl: lang.rtl === true } : { code: 'en', rtl: false });
 
-const sum = (passes, key) => passes.reduce((total, p) => total + p[key], 0);
+const sum = (passes, key) => passes.reduce((total, p) => total + (p[key] ?? 0), 0); // old pages lack the cache fields
 // `id` names the pass (write, html, links, retro, a11y); the interface says it in the reader's language.
 export const describe = (id, run) => ({
   id,
@@ -18,6 +18,9 @@ export const describe = (id, run) => ({
   inTokens: run.inTokens,
   outTokens: run.outTokens,
   cost: run.cost,
+  cached: run.cachedTokens ?? 0,
+  written: run.writtenTokens ?? 0,
+  cacheEffect: run.cacheEffect ?? 0,
 });
 
 /** What a page cost, for its receipt. `ready` is when the text was on screen, `done` when the links landed. */
@@ -30,6 +33,7 @@ export function summarize(passes, extra = {}) {
     inTokens: sum(passes, 'inTokens'),
     outTokens: sum(passes, 'outTokens'),
     cost: sum(passes, 'cost'),
+    cacheEffect: sum(passes, 'cacheEffect'),
     ...extra,
   };
 }
@@ -62,7 +66,7 @@ export async function writePage({ topic, lens, about = false, settings, signal, 
   const onEvent = throttled(report);
   const depth = DEPTHS[settings.depth] ?? DEPTHS[DEFAULT_DEPTH];
   const prose = await chat({
-    apiKey: settings.apiKey,
+    apiKey: keyFor(settings, settings.model),
     modelId: settings.model,
     messages: [
       { role: 'system', content: pageSystem(depth, settings.lang) },
@@ -82,7 +86,7 @@ export async function writePage({ topic, lens, about = false, settings, signal, 
   if (!truncated) {
     try {
       const run = await chat({
-        apiKey: settings.apiKey,
+        apiKey: keyFor(settings, settings.linkModel),
         modelId: settings.linkModel,
         messages: [
           { role: 'system', content: linksSystem(settings.lang) },
@@ -109,7 +113,7 @@ export async function writePage({ topic, lens, about = false, settings, signal, 
  */
 export async function writeA11y({ digest, settings, signal }) {
   const run = await chat({
-    apiKey: settings.apiKey,
+    apiKey: keyFor(settings, settings.linkModel),
     modelId: settings.linkModel,
     messages: [
       { role: 'system', content: a11ySystem(settings.lang) },
@@ -132,7 +136,7 @@ export async function writeHtmlPage({ topic, lens, about = false, settings, sign
   const onEvent = throttled(report);
   const depth = DEPTHS[settings.depth] ?? DEPTHS[DEFAULT_DEPTH];
   const run = await chat({
-    apiKey: settings.apiKey,
+    apiKey: keyFor(settings, settings.model),
     modelId: settings.model,
     messages: [
       { role: 'system', content: htmlSystem(depth, settings.lang) },
@@ -157,7 +161,7 @@ export const writeByFormat = (options) => (options.settings.format === 'html' ? 
 export async function writeJourney({ stops, settings, signal, onEvent: report }) {
   const onEvent = throttled(report);
   const run = await chat({
-    apiKey: settings.apiKey,
+    apiKey: keyFor(settings, settings.model),
     modelId: settings.model,
     messages: [
       { role: 'system', content: journeySystem(settings.lang) },
@@ -198,7 +202,7 @@ export function parseStarters(text, count = STARTER_COUNT) {
 /** Six places to start, written by the model for this page load. Falls back to a fixed list. */
 export async function writeStarters({ settings, signal }) {
   const run = await chat({
-    apiKey: settings.apiKey,
+    apiKey: keyFor(settings, settings.model),
     modelId: settings.model,
     messages: [{ role: 'user', content: startersUser(sample(FIELDS, STARTER_COUNT), settings.lang) }],
     maxTokens: 300,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { EMPTY, journeyReducer } from './journey.js';
+import { EMPTY, journeyReducer, subtreeIds } from './journey.js';
 import { lensOf, readUrl, urlFor } from './topics.js';
 
 // The browser's own history decides where the reader is. Every page gets a history entry carrying
@@ -105,6 +105,26 @@ export function useJourney() {
     dispatch({ type: 'locate', id: null });
   }, [stamp]);
 
+  /** Deletes a page and what grew from it. If the reader was inside it, they move to the page it grew from, or home. */
+  const remove = useCallback(
+    (id) => {
+      const { nodes, currentId } = latest.current;
+      if (!nodes[id]) return;
+      const inside = subtreeIds(latest.current, id).includes(currentId);
+      const parentId = nodes[id].parentId;
+      dispatch({ type: 'remove', id });
+      if (!inside) return;
+      if (parentId && nodes[parentId]) {
+        stamp(parentId, urlFor(nodes[parentId]));
+        dispatch({ type: 'locate', id: parentId });
+      } else {
+        stamp(null, '');
+        dispatch({ type: 'locate', id: null });
+      }
+    },
+    [stamp],
+  );
+
   const fill = useCallback((id, page) => dispatch({ type: 'fill', id, page }), []);
   const translated = useCallback((id, key, variant) => dispatch({ type: 'translated', id, key, variant }), []);
   const rewrite = useCallback((id, lens) => {
@@ -126,6 +146,7 @@ export function useJourney() {
     jump,
     home,
     fill,
+    remove,
     translated,
     rewrite,
     reset,

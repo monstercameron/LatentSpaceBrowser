@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { DEFAULT_DEPTH, DEFAULT_LINK_MODEL, DEFAULT_MODEL, DEPTHS, MODELS } from '../engine/models.js';
+import { DEFAULT_DEPTH, DEFAULT_LINK_MODEL, DEFAULT_MODEL, DEPTHS, keyFor, isModelId } from '../engine/models.js';
 import { CUSTOM, LANGUAGES, cleanCode, resolveLanguage } from '../i18n/languages.js';
 
 // One small external store, so any component can read settings and any change reaches all of them.
@@ -8,6 +8,7 @@ const LEGACY_KEY = 'cerebras_api_key'; // the first version kept the key under t
 
 export const DEFAULTS = {
   apiKey: '',
+  openaiKey: '',
   model: DEFAULT_MODEL,
   linkModel: DEFAULT_LINK_MODEL,
   depth: DEFAULT_DEPTH, // short | standard | deep
@@ -26,11 +27,11 @@ const MODES = ['light', 'dark', 'system'];
 
 /** Anything stored that is not understood falls back to its default. */
 export function normalize(raw = {}) {
-  const ids = MODELS.map((m) => m.id);
   return {
     apiKey: typeof raw.apiKey === 'string' ? raw.apiKey.trim().replace(/^Bearer\s+/i, '') : DEFAULTS.apiKey,
-    model: ids.includes(raw.model) ? raw.model : DEFAULTS.model,
-    linkModel: ids.includes(raw.linkModel) ? raw.linkModel : DEFAULTS.linkModel,
+    openaiKey: typeof raw.openaiKey === 'string' ? raw.openaiKey.trim().replace(/^Bearers+/i, '') : DEFAULTS.openaiKey,
+    model: isModelId(raw.model) ? raw.model : DEFAULTS.model,
+    linkModel: isModelId(raw.linkModel) ? raw.linkModel : DEFAULTS.linkModel,
     // "long" was the old name of the deepest level
     depth: (raw.depth === 'long' ? 'deep' : raw.depth) in DEPTHS ? (raw.depth === 'long' ? 'deep' : raw.depth) : DEFAULTS.depth,
     format: raw.format === 'html' ? 'html' : 'a2ui',
@@ -92,12 +93,22 @@ export function getApiKey() {
   return current.apiKey || (import.meta.env?.DEV ? (import.meta.env.VITE_APIKEY ?? '') : '');
 }
 
+/** OpenAI's key: the reader's, or a developer's local .env key (never in a production build). */
+export const getOpenAiKey = () => current.openaiKey || (import.meta.env?.DEV ? (import.meta.env.VITE_OPENAI_APIKEY ?? '') : '');
+
 /** Settings as the engine wants them: the effective key, and the language as a full description (`lang`). */
 export const engineSettings = () => ({
   ...current,
   apiKey: getApiKey(),
+  openaiKey: getOpenAiKey(),
   lang: resolveLanguage(current.language, current.customLanguage),
 });
+
+/** Whether the models in use (the page model, and the link model on the A2UI path) all have a key. */
+export function keysReady(s = engineSettings()) {
+  const ids = [s.model, ...(s.format === 'html' ? [] : [s.linkModel])];
+  return ids.every((id) => Boolean(keyFor(s, id)));
+}
 
 export const currentLanguage = () => resolveLanguage(current.language, current.customLanguage);
 

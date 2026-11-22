@@ -163,3 +163,44 @@ language). The reader keeps reading the old text, with a "Translating" status, u
 The result is stored under its language in `page.translations`, so switching back, or on again, is instant and
 free. A translation is checked (same sections, most links kept) and refused if it is not. Measured on a standard
 page: Spanish in 1.7 s for $0.006, 25 of 25 links and 4 of 4 sections kept; switching back and forth cost nothing.
+
+## OpenAI models
+
+Models carry a provider (Cerebras or OpenAI); each provider has its own key in Settings, and a page or link pass
+uses the key of the model that makes it. OpenAI entries are a model plus a reasoning effort (GPT 6.1 Terra at
+medium, GPT 6 Luna at high). Reasoning counts inside OpenAI's output cap, so those entries add `room` to it: with
+6,000 spare tokens Luna at high used the whole cap thinking on one of five link passes and returned nothing.
+
+Measured on five pages at Standard depth (parallel runs, so timings are a little pessimistic):
+
+| page model + link model | write | links | total | cost per page | links per page |
+|---|---|---|---|---|---|
+| Qwen + Qwen (default) | 2.0 s | 0.4 s | 2.4 s | $0.0054 | 49 |
+| Terra medium + Luna high | 30 s | 67 s | 97 s | $0.0131 | 58 |
+| Terra medium + Qwen | 28 s | 0.4 s | 28 s | $0.0106 | 51 |
+| Qwen + Luna high | 1.7 s | 62 s | 64 s | $0.0070 | 51 |
+
+Prices are OpenAI's API list prices (Standard tier, prompts under 272K tokens) from
+developers.openai.com/api/docs/pricing, read on 2026-11-22: input / cached input / output per million tokens, for
+example Terra 6.1 $1 / $0.05 / $5, Luna 6 $0.10 / $0.01 / $0.50, Sol 6.2 $2 / $0.10 / $10, Astra 6.2 $8 / $0.40 / $40.
+(An earlier version of this note took them from the ChatGPT Enterprise rate card, which is a different list.)
+GPT-5.6 Sol's price is promotional until 2026-11-30.
+
+**Prompt caching.** OpenAI caches the start of a prompt automatically when it is 1,024 tokens or more and a later call
+begins with the identical text. A read costs 0.05x to 0.1x the input rate; a write (GPT-5.6 and later) costs 1.25x. The
+receipt reads `cached_tokens` and `cache_write_tokens` from each call's usage, bills them at those rates, and shows
+a Cache column per pass plus a total on the summary line ("cache saved $x" or "cache cost $x"). Measured with Terra
+writing and Luna linking, four pages in a row: the link pass (about 1,600 prompt tokens) was stored every time and
+never read back, because the page text comes first and differs on every page. So today the cache costs a little (about
+$0.00004 a page with Luna, about $0.0004 with Terra as the linker) and saves nothing. The writing prompt is about
+900 tokens, under the minimum, so it is never cached. Cerebras reports no discount, so its rows show none.
+Worth trying: put the page text first and the instructions after it, so the link pass and the accessibility pass share
+one cached prefix, and read it at a twentieth of the price on Terra.
+
+**Choosing OpenAI models.** The app does not hard-code which OpenAI models exist. With a key, Settings asks OpenAI's
+model list (`GET /v1/models`, which works straight from the browser), keeps the newest eight text models of the GPT-5
+line and later (snapshots, pro, codex, audio, image and search variants are left out), and offers each at low,
+medium and high reasoning. The list is cached for a day and has a refresh button. A model is stored as
+`model:effort` (for example `gpt-6.2-sol:medium`); one the app has never heard of is sent to OpenAI by name, and its
+price is estimated at Terra's rate and marked as an estimate until it is added to the price table in `models.js`.
+The list says what exists, not what each model supports, so an effort a model refuses comes back as OpenAI's own error.

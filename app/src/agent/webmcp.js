@@ -62,7 +62,7 @@ export function buildTools(app) {
     const topic = String(args?.topic ?? '').trim();
     if (!topic) return fail('"topic" is required.');
     const before = app.read();
-    if (!before.hasKey) return fail('No API key is set. Ask the user to add their Cerebras key in Settings.');
+    if (!before.hasKey) return fail('No API key is set for the models in use. Ask the user to add it in Settings.');
     if (before.budget > 0 && before.spend >= before.budget) return fail('The spending limit the user set is reached. Ask them to raise it in Settings.');
     const id = how === 'search' ? app.search(topic) : app.follow(topic);
     return ok(describe(await settled({ id, signal: options?.signal })));

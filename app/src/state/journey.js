@@ -67,11 +67,29 @@ export function journeyReducer(state, action) {
       const node = { kind: 'page', parentId: null, lens: [], at: Date.now(), ...action.node, id: action.id };
       return withPrune({ ...state, nodes: { ...state.nodes, [action.id]: node }, order: [...state.order, action.id], currentId: action.id });
     }
+    // Delete a page and everything that grew from it: for the first page of a journey, the whole trail.
+    case 'remove': {
+      const gone = new Set(subtreeIds(state, action.id));
+      if (!gone.size) return state;
+      const nodes = Object.fromEntries(Object.entries(state.nodes).filter(([id]) => !gone.has(id)));
+      const order = state.order.filter((id) => !gone.has(id));
+      // Anything left that pointed into the deleted part becomes the start of a trail of its own.
+      for (const id of Object.keys(nodes)) if (gone.has(nodes[id].parentId)) nodes[id] = { ...nodes[id], parentId: null };
+      return { ...state, nodes, order, currentId: gone.has(state.currentId) ? null : state.currentId };
+    }
     case 'reset':
       return EMPTY;
     default:
       return state;
   }
+}
+
+/** `id` and every page that descends from it. */
+export function subtreeIds(state, id) {
+  if (!state.nodes[id]) return [];
+  const out = [id];
+  for (let i = 0; i < out.length; i++) for (const other of state.order) if (state.nodes[other]?.parentId === out[i] && !out.includes(other)) out.push(other);
+  return out;
 }
 
 /** Ids from the root of its branch down to `id`. */
@@ -105,4 +123,23 @@ export function treeRows(state) {
   };
   roots.forEach((id) => walk(id, 0));
   return rows;
+}
+
+/**
+ * What the rows look like once branches are folded: each row gets how many pages sit under it, and rows under a
+ * folded one are left out. `rows` come from treeRows, depth-first, so a row's descendants are the rows after it
+ * that are deeper, up to the next row that is not.
+ */
+export function visibleRows(rows, collapsed) {
+  const out = [];
+  let hideBelow = null; // the depth of a folded row whose descendants are being skipped
+  rows.forEach((row, i) => {
+    if (hideBelow !== null && row.depth > hideBelow) return;
+    hideBelow = null;
+    let below = 0;
+    while (rows[i + 1 + below] && rows[i + 1 + below].depth > row.depth) below++;
+    out.push({ ...row, below, folded: below > 0 && collapsed.has(row.node.id) });
+    if (below > 0 && collapsed.has(row.node.id)) hideBelow = row.depth;
+  });
+  return out;
 }
