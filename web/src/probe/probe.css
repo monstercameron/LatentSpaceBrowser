@@ -1,0 +1,11 @@
+/* Astryx plus Tailwind 3, as the Astryx migration docs lay it out. */
+@import '@astryxdesign/theme-neutral/fonts.css';
+@import '@astryxdesign/core/reset.css';
+@import '@astryxdesign/core/astryx.css';
+@import '@astryxdesign/theme-neutral/theme.css';
+
+@layer tw-preflight {
+  @tailwind base; /* layered, so the Astryx theme wins over Tailwind's reset */
+}
+@tailwind components;
+@tailwind utilities; /* unlayered, so utility classes keep winning everywhere */

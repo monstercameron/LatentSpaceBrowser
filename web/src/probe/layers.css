@@ -1,0 +1,2 @@
+/* Imported first: declares the cascade-layer order (Astryx docs, "Tailwind v3 coexistence"). */
+@layer reset, tw-preflight, astryx-base, astryx-theme;
