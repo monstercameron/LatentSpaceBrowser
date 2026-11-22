@@ -1,12 +1,17 @@
 import { applyLinkPhrases, expandCompact, linkPassPrompt } from './compact.js';
-import { chat } from './cerebras.js';
+import { ApiError, chat } from './cerebras.js';
 import { cleanHtmlReply, wellFormed } from './html.js';
 import { DEFAULT_DEPTH, DEPTHS } from './models.js';
-import { FIELDS, JOURNEY_SYSTEM, LINKS_SYSTEM, htmlSystem, journeyUser, pageSystem, pageUser, startersUser } from './prompts.js';
+import { a11ySystem, FIELDS, htmlSystem, journeySystem, journeyUser, linksSystem, pageSystem, pageUser, startersUser } from './prompts.js';
+import { parseA11y } from './a11y.js';
+
+/** What a page records about the language it was written in, so it can be drawn with the right `lang` and direction. */
+const langInfo = (lang) => (lang ? { code: lang.code ?? null, rtl: lang.rtl === true } : { code: 'en', rtl: false });
 
 const sum = (passes, key) => passes.reduce((total, p) => total + p[key], 0);
-const describe = (name, run) => ({
-  name,
+// `id` names the pass (write, html, links, retro, a11y); the interface says it in the reader's language.
+export const describe = (id, run) => ({
+  id,
   model: run.modelId,
   ttft: run.ttft,
   seconds: run.seconds,
@@ -44,7 +49,7 @@ function throttled(fn, ms = 80) {
 function check(text) {
   const { errors } = expandCompact(text);
   const fatal = errors.find((e) => !e.startsWith('no ##'));
-  if (fatal) throw new Error('The model did not reply in the page format. Try again.');
+  if (fatal) throw new ApiError('The model did not reply in the page format. Try again.', 0, 'format');
 }
 
 /**
@@ -53,22 +58,22 @@ function check(text) {
  *   2. links  - a cheaper model names phrases to link; `onEvent({ stage: 'links', text })` when applied
  * The page is complete after pass one. A failed link pass costs the page its links, not its text.
  */
-export async function writePage({ topic, lens, settings, signal, onEvent: report }) {
+export async function writePage({ topic, lens, about = false, settings, signal, onEvent: report }) {
   const onEvent = throttled(report);
   const depth = DEPTHS[settings.depth] ?? DEPTHS[DEFAULT_DEPTH];
   const prose = await chat({
     apiKey: settings.apiKey,
     modelId: settings.model,
     messages: [
-      { role: 'system', content: pageSystem(depth) },
-      { role: 'user', content: pageUser(topic, lens) },
+      { role: 'system', content: pageSystem(depth, settings.lang) },
+      { role: 'user', content: pageUser(topic, lens, about) },
     ],
     maxTokens: depth.budget,
     signal,
     onText: (text) => onEvent?.({ stage: 'prose', text }),
   });
   check(prose.text);
-  const passes = [describe('Write the page', prose)];
+  const passes = [describe('write', prose)];
   let text = prose.text.trim();
   const truncated = prose.finish === 'length';
   onEvent?.({ stage: 'prose', text, final: true });
@@ -80,7 +85,7 @@ export async function writePage({ topic, lens, settings, signal, onEvent: report
         apiKey: settings.apiKey,
         modelId: settings.linkModel,
         messages: [
-          { role: 'system', content: LINKS_SYSTEM },
+          { role: 'system', content: linksSystem(settings.lang) },
           { role: 'user', content: linkPassPrompt(text) },
         ],
         maxTokens: 2400, // a deeper page has more to link, and a reasoning model spends part of this thinking
@@ -88,14 +93,34 @@ export async function writePage({ topic, lens, settings, signal, onEvent: report
       });
       const applied = applyLinkPhrases(text, run.text);
       text = applied.text;
-      passes.push({ ...describe('Choose links', run), added: applied.added, missed: applied.missed, retargeted: applied.retargeted });
+      passes.push({ ...describe('links', run), added: applied.added, missed: applied.missed, retargeted: applied.retargeted });
       onEvent?.({ stage: 'links', text });
     } catch (error) {
       if (error.name === 'AbortError') throw error;
       linkError = error.message;
     }
   }
-  return { format: 'a2ui', compact: text, truncated, linkError, metrics: summarize(passes) };
+  return { format: 'a2ui', lang: langInfo(settings.lang), compact: text, truncated, linkError, metrics: summarize(passes) };
+}
+
+/**
+ * The optional accessibility pass: a small call reads the finished page (as `digest`, see a11yDigest) and
+ * returns annotations. Resolves with { a11y, pass }, where `pass` is its line for the receipt.
+ */
+export async function writeA11y({ digest, settings, signal }) {
+  const run = await chat({
+    apiKey: settings.apiKey,
+    modelId: settings.linkModel,
+    messages: [
+      { role: 'system', content: a11ySystem(settings.lang) },
+      { role: 'user', content: digest },
+    ],
+    maxTokens: 2400,
+    temperature: 0.2,
+    signal,
+  });
+  const a11y = parseA11y(run.text);
+  return { a11y, pass: { ...describe('a11y', run), summary: Boolean(a11y.summary), abbr: a11y.abbr.length, lang: a11y.lang.length, links: a11y.links.length } };
 }
 
 /**
@@ -103,15 +128,15 @@ export async function writePage({ topic, lens, settings, signal, onEvent: report
  * when it draws it. `onEvent({ stage: 'prose', text, format: 'html' })` as it streams. There is no
  * second pass, so the page, links included, is whole when the text ends.
  */
-export async function writeHtmlPage({ topic, lens, settings, signal, onEvent: report }) {
+export async function writeHtmlPage({ topic, lens, about = false, settings, signal, onEvent: report }) {
   const onEvent = throttled(report);
   const depth = DEPTHS[settings.depth] ?? DEPTHS[DEFAULT_DEPTH];
   const run = await chat({
     apiKey: settings.apiKey,
     modelId: settings.model,
     messages: [
-      { role: 'system', content: htmlSystem(depth) },
-      { role: 'user', content: pageUser(topic, lens) },
+      { role: 'system', content: htmlSystem(depth, settings.lang) },
+      { role: 'user', content: pageUser(topic, lens, about) },
     ],
     maxTokens: depth.budget,
     signal,
@@ -120,9 +145,9 @@ export async function writeHtmlPage({ topic, lens, settings, signal, onEvent: re
   const html = cleanHtmlReply(run.text);
   const truncated = run.finish === 'length';
   // A cut-off page is shown, with its warning. Anything else that breaks the format is an error.
-  if (!truncated && !wellFormed(html)) throw new Error('The model did not reply in the page format. Try again.');
+  if (!truncated && !wellFormed(html)) throw new ApiError('The model did not reply in the page format. Try again.', 0, 'format');
   onEvent({ stage: 'prose', text: html, final: true, format: 'html' });
-  return { format: 'html', html, truncated, linkError: null, metrics: summarize([describe('Write the page (HTML)', run)]) };
+  return { format: 'html', lang: langInfo(settings.lang), html, truncated, linkError: null, metrics: summarize([describe('html', run)]) };
 }
 
 /** Writes a page by whichever path the reader chose in settings. */
@@ -135,7 +160,7 @@ export async function writeJourney({ stops, settings, signal, onEvent: report })
     apiKey: settings.apiKey,
     modelId: settings.model,
     messages: [
-      { role: 'system', content: JOURNEY_SYSTEM },
+      { role: 'system', content: journeySystem(settings.lang) },
       { role: 'user', content: journeyUser(stops) },
     ],
     maxTokens: 500 + stops.length * 90,
@@ -144,7 +169,7 @@ export async function writeJourney({ stops, settings, signal, onEvent: report })
   });
   check(run.text);
   onEvent?.({ stage: 'prose', text: run.text.trim(), final: true });
-  return { format: 'a2ui', compact: run.text.trim(), truncated: run.finish === 'length', linkError: null, metrics: summarize([describe('Write the retrospective', run)]) };
+  return { format: 'a2ui', lang: langInfo(settings.lang), compact: run.text.trim(), truncated: run.finish === 'length', linkError: null, metrics: summarize([describe('retro', run)]) };
 }
 
 /* ---------------------------------------------------------------- starters */
@@ -175,7 +200,7 @@ export async function writeStarters({ settings, signal }) {
   const run = await chat({
     apiKey: settings.apiKey,
     modelId: settings.model,
-    messages: [{ role: 'user', content: startersUser(sample(FIELDS, STARTER_COUNT)) }],
+    messages: [{ role: 'user', content: startersUser(sample(FIELDS, STARTER_COUNT), settings.lang) }],
     maxTokens: 300,
     temperature: 1,
     signal,

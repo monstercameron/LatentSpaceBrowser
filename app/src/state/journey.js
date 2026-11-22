@@ -27,7 +27,7 @@ export function journeyReducer(state, action) {
   switch (action.type) {
     // A new page. `fresh` starts a new branch from nowhere with no lens: a search, not a link.
     case 'push': {
-      const { id, kind = 'page', topic, fresh = false, lens, stops } = action;
+      const { id, kind = 'page', topic, fresh = false, lens, stops, about = false } = action;
       const parentId = fresh || kind === 'retro' ? null : state.currentId;
       const node = {
         id,
@@ -37,6 +37,7 @@ export function journeyReducer(state, action) {
         lens: kind === 'retro' ? [] : (lens ?? (fresh ? [] : lensOf(state.nodes, parentId))),
         at: Date.now(),
         ...(stops ? { stops } : {}),
+        ...(about ? { about: true } : {}), // the page about the app itself, whatever its title is in this language
       };
       return withPrune({ ...state, nodes: { ...state.nodes, [id]: node }, order: [...state.order, id], currentId: id });
     }
@@ -44,6 +45,13 @@ export function journeyReducer(state, action) {
     case 'fill':
       if (!state.nodes[action.id]) return state;
       return withPrune({ ...state, nodes: { ...state.nodes, [action.id]: { ...state.nodes[action.id], page: action.page } } });
+    // A finished page, translated: kept beside the original under its language, so switching back is free.
+    case 'translated': {
+      const node = state.nodes[action.id];
+      if (!node?.page) return state;
+      const page = { ...node.page, translations: { ...node.page.translations, [action.key]: action.variant } };
+      return { ...state, nodes: { ...state.nodes, [action.id]: { ...node, page } } };
+    }
     // Write this page again, optionally through a different lens.
     case 'rewrite': {
       const node = state.nodes[action.id];

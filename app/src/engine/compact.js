@@ -8,7 +8,10 @@
 // There are no brackets to balance, so nothing the model writes can break the structure.
 // expandCompact turns the lines into A2UI messages (a surface of flat, id-linked components).
 
-const KEEP_AS_IS = /(\[\[.*?\]\]|\*\*.*?\*\*)/; // split with a capture group: odd parts are links and bold
+// Split with a capture group: the odd parts are links, bold, and the accessibility tags, left untouched.
+export const KEEP_AS_IS = /(\[\[.*?\]\]|\*\*.*?\*\*|\{(?:abbr|lang)\|.*?\})/;
+// A fact line is "@ Label: value", and Chinese, Japanese and others write the colon full-width.
+const FACT_COLON = /[:：]/;
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const norm = (s) => s.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, '').trim();
 
@@ -50,8 +53,11 @@ export function expandCompact(raw) {
       add({ component: 'Heading', level: titled ? 2 : 1, text: line.replace(/^#\s+/, '') });
       titled = true;
     } else if (isFact) {
-      const [label, ...rest] = line.slice(2).split(':');
-      (facts ??= add({ component: 'Facts', items: [] })).items.push({ label: label.trim(), value: rest.join(':').trim() });
+      const body = line.slice(2);
+      const at = body.search(FACT_COLON);
+      const label = at < 0 ? body : body.slice(0, at);
+      const value = at < 0 ? '' : body.slice(at + 1);
+      (facts ??= add({ component: 'Facts', items: [] })).items.push({ label: label.trim(), value: value.trim() });
     } else if (isItem) (list ??= add({ component: 'List', items: [] })).items.push(line.replace(/^-\s+/, ''));
     else if (/^>\s*\S/.test(line)) add({ component: 'Quote', text: line.replace(/^>\s*/, '') });
     else add({ component: 'Prose', text: line });
@@ -83,7 +89,7 @@ export function blocksOf(raw) {
     const t = line.trim();
     if (!t || t.startsWith('```') || /^#/.test(t)) return;
     if (t.startsWith('@ ')) {
-      const colon = t.indexOf(':');
+      const colon = t.search(FACT_COLON);
       if (colon < 0) return;
       out.push({ line: i, kind: 'fact', label: t.slice(2, colon).trim(), prefix: t.slice(0, colon + 1) + ' ', text: t.slice(colon + 1).trim() });
     } else if (/^-\s+\S/.test(t)) out.push({ line: i, kind: 'item', prefix: '- ', text: t.replace(/^-\s+/, '') });
@@ -105,7 +111,7 @@ export function linkPassPrompt(raw) {
 }
 
 // Two spellings of one thing must count as one link: "Enzyme" and "enzymes", "the Council".
-const stem = (s) =>
+export const stem = (s) =>
   norm(s)
     .replace(/^(the|a|an) /, '')
     .split(' ')
@@ -113,14 +119,18 @@ const stem = (s) =>
     .join(' ');
 
 const DASHES = '\\-\\u2010-\\u2015\\u2212'; // hyphen, the Unicode hyphens and dashes, minus
+// Scripts written without spaces between words: Han, Hiragana, Katakana, Thai, Lao, Burmese, Khmer.
+export const NO_SPACES = /[぀-ヿ㐀-䶿一-鿿豈-﫿฀-໿က-႟ក-៿]/;
 // A pattern for `phrase` that forgives what models change silently: curly apostrophes, kinds of
 // dash, runs of spaces. Never loosens the words themselves.
-function phrasePattern(phrase, flags) {
+export function phrasePattern(phrase, flags) {
   const source = escapeRe(phrase.trim())
     .replace(/-|[‐-―−]/g, `[${DASHES}]`)
     .replace(/['’]/g, "['’]")
     .replace(/\s+/g, '\\s+');
-  return new RegExp(`(?<![\\p{L}\\p{N}])${source}(?![\\p{L}\\p{N}])`, flags);
+  // Where words run together with no spaces (Chinese, Japanese, Thai...), the letters next to a phrase
+  // are part of the same sentence, not part of a longer word, so no boundary is required there.
+  return NO_SPACES.test(phrase) ? new RegExp(source, flags) : new RegExp(`(?<![\\p{L}\\p{N}])${source}(?![\\p{L}\\p{N}])`, flags);
 }
 
 const letterCount = (s) => (s.match(/\p{L}/gu) ?? []).length;
@@ -133,7 +143,9 @@ const letterCount = (s) => (s.match(/\p{L}/gu) ?? []).length;
  */
 export function worthLinking(phrase, kind = 'paragraph') {
   const compact = phrase.replace(/\s/g, '');
-  const words = phrase.trim().split(/\s+/).length;
+  // Without spaces there are no words to count, so a phrase's length stands in for them: about two and
+  // a half characters to a word.
+  const words = NO_SPACES.test(phrase) ? Math.ceil(compact.length / 2.5) : phrase.trim().split(/\s+/).length;
   if (words > (kind === 'fact' ? 4 : 5)) return false;
   if (letterCount(phrase) < 3) return false; // a symbol, a unit, a number
   return letterCount(phrase) >= compact.length * 0.7; // mostly digits and symbols: a measurement or a date ("g/cm³")

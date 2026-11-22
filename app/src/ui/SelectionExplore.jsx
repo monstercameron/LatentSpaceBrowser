@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@astryxdesign/core/Button';
+import { useT } from '../i18n/index.js';
 
 /** Select any text in the page and explore it as a topic. Positioned over the selection inside `boxRef`. */
 export function SelectionExplore({ boxRef, onExplore }) {
+  const t = useT();
   const [selection, setSelection] = useState(null);
 
   useEffect(() => {
@@ -32,7 +34,7 @@ export function SelectionExplore({ boxRef, onExplore }) {
     // mousedown must not clear the selection before the click lands
     <div className="selection-explore" style={{ top: selection.top, left: selection.left }} onMouseDown={(e) => e.preventDefault()}>
       <Button
-        label={`Explore “${label}”`}
+        label={t('page.explore', { text: label })}
         size="sm"
         variant="primary"
         onClick={() => {

@@ -126,3 +126,40 @@ tested with `node --test`.
 - The page cache never aborts a started write. A page you left finishes into the cache, so Back is
   instant and nothing is paid for twice.
 - Dark mode, theme and fonts come from Astryx tokens. App CSS only lays out the page.
+
+## Language and accessibility
+
+**Language.** The app and the pages it writes can be in any language. Five are one click away (English,
+中文, हिन्दी, Español, العربية); anything else is typed into Settings. For a custom language one cheap call
+describes it (English name, native name, BCP 47 code, direction), then the model translates the app's 117
+interface strings in a few parallel requests (about $0.005, a few seconds) and the result is cached in
+`localStorage`. The four shipped catalogs are generated once by `scripts/translate-ui.mjs` and loaded on
+demand. They are machine translations and have not been reviewed by native speakers.
+Pages are written in the chosen language (the prompt says so; the line markers stay ASCII), the page is
+tagged `lang` and `dir`, and the cache key includes the language, so each language is its own page.
+Scripts without spaces use `Intl.Segmenter` for the word animation, and link phrases match without word
+boundaries.
+
+**Accessibility pass (off by default).** An optional third call reads the finished page and returns
+annotations the app applies, never retyping the page: a plain-language summary ("In short"), abbreviations
+spelled out on first use, foreign phrases tagged with `lang`, and a description for each link. It uses the
+link model and costs roughly a quarter of a cent on a standard page. Annotations are stored beside the page
+and work on both the A2UI and HTML paths. Pages written with the pass are cached separately.
+
+## Agents
+
+`src/agent/webmcp.js` offers the app to agents as WebMCP tools. They mirror what a reader does (search, follow
+a link so the path carries on, read, walk the trail, set preferences) and wait for a page to finish before
+answering, so an agent gets a page, not a half-written draft. Pages are returned as Markdown with links as
+topics. The API key and spending limit are deliberately out of reach. The WebMCP spec is still changing, so
+registration is feature-detected and failures are logged, never thrown.
+
+## Switching language on a page
+
+A page is written once, in the language it was written in (`page.langKey`). Switching language does not rewrite it:
+the stored text (and its accessibility notes) is sent to the model to be translated faithfully, keeping the
+sentences, the structure and the links (link titles are translated too, so the next page opens in the new
+language). The reader keeps reading the old text, with a "Translating" status, until the translation replaces it.
+The result is stored under its language in `page.translations`, so switching back, or on again, is instant and
+free. A translation is checked (same sections, most links kept) and refused if it is not. Measured on a standard
+page: Spanish in 1.7 s for $0.006, 25 of 25 links and 4 of 4 sections kept; switching back and forth cost nothing.

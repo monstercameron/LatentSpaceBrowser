@@ -243,7 +243,7 @@ test('models: Qwen is the default, an unknown id falls back to it, and cost is p
 });
 
 test('pipeline: a receipt sums its passes and says when the text was ready', () => {
-  const pass = (seconds, cost) => ({ name: 'x', seconds, ttft: 0.1, inTokens: 100, outTokens: 50, cost });
+  const pass = (seconds, cost) => ({ id: 'x', seconds, ttft: 0.1, inTokens: 100, outTokens: 50, cost });
   const m = summarize([pass(0.6, 0.001), pass(0.4, 0.0005)]);
   assert.equal(m.ready, 0.6);
   assert.equal(m.done, 1);

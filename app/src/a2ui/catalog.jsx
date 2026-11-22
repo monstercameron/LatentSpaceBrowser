@@ -1,6 +1,8 @@
 import { Blockquote } from '@astryxdesign/core/Blockquote';
 import { Heading } from '@astryxdesign/core/Heading';
 import { MetadataList, MetadataListItem } from '@astryxdesign/core/MetadataList';
+import { Text } from '@astryxdesign/core/Text';
+import { useT } from '../i18n/index.js';
 import { Inline } from './Inline.jsx';
 import { useReveal } from './navigation.js';
 import { childrenOf } from './surface.js';
@@ -22,14 +24,28 @@ export function Prose({ text, tail }) {
 }
 
 export function Facts({ items }) {
+  const t = useT();
   return (
-    <MetadataList title="Key facts" label={{ position: 'top' }}>
+    <MetadataList title={t('page.facts')} label={{ position: 'top' }}>
       {items.map((item, i) => (
         <MetadataListItem key={i} label={item.label}>
           <Inline text={item.value} />
         </MetadataListItem>
       ))}
     </MetadataList>
+  );
+}
+
+/** The accessibility pass's plain-language summary: the gist first, for anyone who wants it. */
+function Summary({ text }) {
+  const t = useT();
+  return (
+    <aside className="latent-summary" aria-label={t('page.summaryLabel')}>
+      <Text type="label" color="accent">{t('page.summary')}</Text>
+      <p className="prose">
+        <Inline text={text} />
+      </p>
+    </aside>
   );
 }
 
@@ -98,6 +114,8 @@ export function Block({ surface, id }) {
           <code>{c.text}</code>
         </pre>
       );
+    case 'Summary':
+      return <Summary text={c.text} />;
     case 'Quote':
       return (
         <Blockquote>

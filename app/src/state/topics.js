@@ -36,4 +36,20 @@ export function readUrl(search) {
  * is a different page. The link model only matters to the A2UI path, which is the one that uses it.
  */
 export const pageKey = ({ topic, lens = [] }, settings) =>
-  [settings.format, settings.model, settings.format === 'html' ? '' : settings.linkModel, settings.depth, lens.join('>'), topic].join('|');
+  [
+    settings.format,
+    settings.model,
+    settings.format === 'html' ? '' : settings.linkModel,
+    settings.depth,
+    languageKey(settings),
+    settings.a11y ? 'a11y' : '', // a page written with the accessibility pass is a different page
+    lens.join('>'),
+    topic,
+  ].join('|');
+
+/** The language a page is written in, for its key: the same topic in Spanish is not the English page. */
+export const languageKey = (settings) => {
+  const lang = settings.lang;
+  if (lang) return lang.id === 'custom' ? `custom:${lang.name}` : lang.id;
+  return settings.language ?? 'en';
+};

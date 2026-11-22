@@ -6,10 +6,13 @@ import { Heading } from '@astryxdesign/core/Heading';
 import { Skeleton } from '@astryxdesign/core/Skeleton';
 import { Text } from '@astryxdesign/core/Text';
 import { Block, Facts, RevealProvider } from '../a2ui/catalog.jsx';
+import { errorText } from '../i18n/errors.js';
+import { useT } from '../i18n/index.js';
 import { childrenOf, headingsOf } from '../a2ui/surface.js';
 import { LensBar } from './LensBar.jsx';
 import { Receipt } from './Receipt.jsx';
 import { SelectionExplore } from './SelectionExplore.jsx';
+import { useActiveSection } from './useActiveSection.js';
 
 const topicOf = (anchor) => new URLSearchParams(anchor.getAttribute('href').replace(/^[^?]*/, '')).get('topic');
 const MIN_SECTIONS_FOR_CONTENTS = 3;
@@ -32,9 +35,10 @@ function Loading() {
  * `format` only says which path made the page, for its receipt.
  */
 export function Reader({
-  node, format, surface, stage, streaming, error, truncated, linkError, metrics,
-  onExplore, onRetry, onFresh, onSettings, onHover,
+  node, format, surface, stage, streaming, error, truncated, linkError, metrics, pageLang, notice,
+  onExplore, onRetry, onRetranslate, onFresh, onSettings, onHover,
 }) {
+  const t = useT();
   const boxRef = useRef(null);
   const components = surface.components;
   const rootKids = childrenOf(surface, 'root');
@@ -44,6 +48,7 @@ export function Reader({
 
   const sections = headingsOf(surface);
   const hasText = rootKids.length > 0;
+  const active = useActiveSection(sections.map((s) => `sec-${s.id}`));
   // Only sections count toward showing a contents list; sub-sections nest beneath them.
   const showContents = sections.filter((s) => s.level === 2).length >= MIN_SECTIONS_FOR_CONTENTS;
   // While the page is being written, new words spawn, and a caret marks the block they are joining.
@@ -56,22 +61,24 @@ export function Reader({
   };
 
   return (
-    <article className="reader-page" aria-busy={Boolean(stage)}>
+    // The page's own language and direction, which may differ from the app's: a screen reader switches
+    // voice by `lang`, and right-to-left scripts lay out by `dir`.
+    <article className="reader-page" aria-busy={Boolean(stage)} lang={pageLang?.code ?? undefined} dir={pageLang?.rtl ? 'rtl' : undefined}>
       <LensBar lens={node.lens} onFresh={onFresh} />
 
       {error && (
         <div className="alert">
           <Banner
             status="error"
-            title="This page could not be written"
-            description={error.message}
+            title={t('page.errorTitle')}
+            description={errorText(error, t)}
             container="card"
             collapsible={false}
             endContent={
               <>
                 {/* no answer, a rejected key, or the spending limit (status -1): all are fixed in Settings */}
-                {[-1, 0, 401, 403].includes(error.status) && <Button label="Open settings" size="sm" onClick={onSettings} />}
-                <Button label="Try again" size="sm" variant="primary" onClick={onRetry} />
+                {[-1, 0, 401, 403].includes(error.status) && <Button label={t('page.openSettings')} size="sm" onClick={onSettings} />}
+                <Button label={t('page.tryAgain')} size="sm" variant="primary" onClick={onRetry} />
               </>
             }
           />
@@ -95,34 +102,46 @@ export function Reader({
                   <Block key={id} surface={surface} id={id} />
                 ))}
               </div>
+              {notice && (
+                <div className="alert">
+                  <Banner
+                    status="warning"
+                    title={notice}
+                    container="card"
+                    collapsible={false}
+                    endContent={<Button label={t('page.again')} size="sm" onClick={onRetranslate} />}
+                  />
+                </div>
+              )}
               {truncated && (
                 <div className="alert">
                   <Banner
                     status="warning"
-                    title="This page ran into its length limit"
+                    title={t('page.truncated')}
                     container="card"
                     collapsible={false}
-                    endContent={<Button label="Write it again" size="sm" onClick={onRetry} />}
+                    endContent={<Button label={t('page.again')} size="sm" onClick={onRetry} />}
                   />
                 </div>
               )}
               <SelectionExplore boxRef={boxRef} onExplore={onExplore} />
             </div>
 
-            <aside className="rail" aria-label="About this page">
+            <aside className="rail" aria-label={t('page.about')}>
               {factsId && (
                 <Card padding={3}>
                   <Facts items={components[factsId].items} />
                 </Card>
               )}
               {showContents && (
-                <nav aria-label="On this page" className="contents">
-                  <Text type="label">On this page</Text>
+                <nav aria-label={t('page.contents')} className="contents">
+                  <Text type="label">{t('page.contents')}</Text>
                   <ol>
                     {sections.map((section) => (
-                      <li key={section.id} className={section.level === 3 ? 'sub' : undefined}>
+                      <li key={section.id} className={`${section.level === 3 ? 'sub' : ''}${active === `sec-${section.id}` ? ' current' : ''}`.trim() || undefined}>
                         <a
                           href={`#sec-${section.id}`}
+                          aria-current={active === `sec-${section.id}` ? 'location' : undefined}
                           onClick={(e) => {
                             e.preventDefault();
                             document.getElementById(`sec-${section.id}`)?.scrollIntoView();

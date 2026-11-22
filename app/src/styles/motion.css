@@ -80,6 +80,7 @@
   }
 
   .alert { animation: rise-soft 0.6s var(--ease-out) backwards; }
+  .latent-summary { animation: rise-soft 0.8s var(--ease-out) backwards; }
   .receipt { animation: rise-soft 0.8s var(--ease-out) 0.15s backwards; }
 
   /* --------------------------------------------------- the status while a page is written */

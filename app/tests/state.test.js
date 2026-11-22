@@ -42,12 +42,33 @@ test('keys: the HTML and A2UI paths never share a page, and HTML ignores the lin
   assert.equal(pageKey({ topic: 'X' }, h), pageKey({ topic: 'X' }, { ...h, linkModel: 'other' }), 'the HTML path has no link pass');
 });
 
+test('keys: a page in another language, or with the accessibility pass, is a different page', () => {
+  const base = { format: 'a2ui', model: 'm', linkModel: 'l', depth: 'short', language: 'en' };
+  const same = pageKey({ topic: 'X' }, base);
+  assert.notEqual(same, pageKey({ topic: 'X' }, { ...base, language: 'es' }));
+  assert.notEqual(same, pageKey({ topic: 'X' }, { ...base, a11y: true }));
+  assert.equal(same, pageKey({ topic: 'X' }, { ...base, a11y: false }));
+  assert.notEqual(pageKey({ topic: 'X' }, { ...base, lang: { id: 'custom', name: 'Swahili' } }), pageKey({ topic: 'X' }, { ...base, lang: { id: 'custom', name: 'Zulu' } }));
+});
+
 test('settings: depth is short, standard or deep, defaults to standard, and the old name "long" means deep', () => {
   assert.equal(normalize({}).depth, 'standard');
   assert.equal(normalize({ depth: 'deep' }).depth, 'deep');
   assert.equal(normalize({ depth: 'long' }).depth, 'deep');
   assert.equal(normalize({ depth: 'short' }).depth, 'short');
   assert.equal(normalize({ depth: 'huge' }).depth, 'standard');
+});
+
+test('settings: the language is one of five, or a custom one the model described; the accessibility pass is off', () => {
+  assert.equal(normalize({}).language, 'en');
+  assert.equal(normalize({}).a11y, false, 'the accessibility pass is off unless asked for');
+  assert.equal(normalize({ a11y: true }).a11y, true);
+  assert.equal(normalize({ language: 'ar' }).language, 'ar');
+  assert.equal(normalize({ language: 'xx' }).language, 'en');
+  assert.equal(normalize({ language: 'custom' }).language, 'en', 'custom with no description is not usable');
+  const c = normalize({ language: 'custom', customLanguage: { name: ' Swahili ', native: 'Kiswahili', code: 'sw', rtl: false } });
+  assert.deepEqual([c.language, c.customLanguage], ['custom', { name: 'Swahili', native: 'Kiswahili', code: 'sw', rtl: false }]);
+  assert.equal(normalize({ language: 'custom', customLanguage: { name: 'Klingon', code: 'not a code!' } }).customLanguage.code, null, 'a bad code is dropped');
 });
 
 test('settings: the page format is html or a2ui, and anything else is a2ui', () => {

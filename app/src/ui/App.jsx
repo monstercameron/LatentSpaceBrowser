@@ -4,29 +4,36 @@ import { Button } from '@astryxdesign/core/Button';
 import { Theme } from '@astryxdesign/core/theme';
 import { neutralTheme } from '@astryxdesign/theme-neutral/built';
 import { NavigationProvider } from '../a2ui/catalog.jsx';
+import { registerWebMcp } from '../agent/webmcp.js';
+import { applyA11y } from '../engine/a11y.js';
 import { surfaceFrom } from '../a2ui/surface.js';
 import { expandCompact } from '../engine/compact.js';
-import { writeByFormat, writeJourney } from '../engine/pipeline.js';
-import { ABOUT_TOPIC } from '../engine/prompts.js';
+import { applyLanguage, useT } from '../i18n/index.js';
+import { errorText } from '../i18n/errors.js';
 import { ensure, forget, has, unusedPrefetchCost } from '../state/cache.js';
 import { stopsTo, treeRows } from '../state/journey.js';
-import { engineSettings, getApiKey, saveSettings, useSettings } from '../state/settings.js';
+import { translatePage } from '../engine/translatePage.js';
+import { summarize } from '../engine/pipeline.js';
+import { currentLanguage, engineSettings, getApiKey, saveSettings, useSettings } from '../state/settings.js';
 import { overBudget, useSpend } from '../state/spend.js';
-import { lensOf, pageKey, urlFor } from '../state/topics.js';
+import { languageKey, lensOf, pageKey, urlFor } from '../state/topics.js';
 import { useJourney } from '../state/useJourney.js';
 import { htmlToSurface } from './htmlSurface.js';
 import { Launchpad } from './Launchpad.jsx';
 import { Reader } from './Reader.jsx';
+import { runPage } from './runPage.js';
 import { SettingsDialog } from './SettingsDialog.jsx';
 import { Shell } from './Shell.jsx';
 import { Trail } from './Trail.jsx';
 
-const RETRO_TITLE = 'Journey Retrospective';
 const PREFETCH_DELAY = 300; // a hover has to mean it
 const TRAIL_KEY = 'latentspace_trail';
 
+// A retrospective is the same page for the same path, model, language and accessibility setting.
 const keyOf = (node, settings) =>
-  node.kind === 'retro' ? `retro|${settings.model}|${node.stops.join('>')}` : pageKey(node, settings);
+  node.kind === 'retro'
+    ? `retro|${settings.model}|${languageKey(settings)}|${settings.a11y ? 'a11y' : ''}|${node.stops.join('>')}`
+    : pageKey(node, settings);
 
 const readTrailOpen = () => {
   try {
@@ -40,15 +47,18 @@ const readTrailOpen = () => {
 
 export default function App() {
   const settings = useSettings();
+  const t = useT();
   const spend = useSpend();
   const journey = useJourney();
   const { state, current } = journey;
   const [live, setLive] = useState(null); // where the current page's write is: { id, draft, error }
   const [attempt, setAttempt] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [focusLanguage, setFocusLanguage] = useState(false); // opened from "Other language…": go straight to its box
   const [trailOpen, setTrailOpen] = useState(readTrailOpen);
   const [query, setQuery] = useState('');
   const [queryFor, setQueryFor] = useState(null);
+  const [trError, setTrError] = useState(null); // a translation that failed: { id, key, message }
 
   const needsWriting = Boolean(current) && !current.page;
   const lensKey = current?.lens?.join('>') ?? '';
@@ -62,21 +72,17 @@ export default function App() {
     const s = engineSettings();
     const key = keyOf(node, s);
     if (!has(key) && overBudget(settings.budget)) {
-      setLive({ id: node.id, error: { message: 'The spending limit for this session is reached. Raise it in Settings to keep writing.', status: -1 } });
+      setLive({ id: node.id, error: { code: 'budget', message: 'The spending limit for this session is reached.', status: -1 } });
       return undefined;
     }
-    const run = (onEvent) =>
-      node.kind === 'retro'
-        ? writeJourney({ stops: node.stops, settings: s, onEvent })
-        : writeByFormat({ topic: node.topic, lens: node.lens, settings: s, onEvent });
-    const entry = ensure(key, run);
+    const entry = ensure(key, (onEvent) => runPage({ node, settings: s, onEvent }));
     const off = entry.subscribe((snap) => {
       setLive({ id: node.id, draft: snap.draft, error: snap.error });
       if (snap.page) journey.fill(node.id, snap.page);
     });
     return off;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `journey.fill` is stable; the rest is named
-  }, [current?.id, needsWriting, lensKey, attempt, settings.model, settings.linkModel, settings.depth, settings.apiKey]);
+  }, [current?.id, needsWriting, lensKey, attempt, settings.model, settings.linkModel, settings.depth, settings.apiKey, settings.language, settings.a11y]);
 
   const retry = () => {
     if (!current) return;
@@ -89,14 +95,69 @@ export default function App() {
   // drawn the way it was written, whatever the toggle says now. The toggle governs the next page.
   const mine = live?.id === current?.id ? live : null;
   const draft = mine?.draft;
-  const format = current?.page?.format ?? (current?.kind === 'retro' ? 'a2ui' : (draft?.format ?? settings.format));
-  const text = (format === 'html' ? current?.page?.html : current?.page?.compact) ?? draft?.text ?? '';
+  // A page keeps the language it was written in; the same page in another language is its translation, stored
+  // beside it. Until a translation arrives the reader keeps reading what they were reading.
+  const wantKey = languageKey(engineSettings());
+  const page = current?.page;
+  // Pages written before translations existed have no langKey; their language code says what they are written in.
+  const isOriginal = page && (page.langKey ? page.langKey === wantKey : (page.lang?.code ?? 'en') === (currentLanguage().code ?? 'en'));
+  const variant = page ? (isOriginal ? page : page.translations?.[wantKey] ?? null) : null;
+  const view = variant ?? page;
+  const translating = Boolean(page) && !variant;
+  const trFailed = trError && trError.id === current?.id && trError.key === wantKey ? trError : null;
+  const format = view?.format ?? (current?.kind === 'retro' ? 'a2ui' : (draft?.format ?? settings.format));
+  const text = (format === 'html' ? view?.html : view?.compact) ?? draft?.text ?? '';
   // Both paths are drawn from the same kind of surface: compact lines are expanded into one, HTML is converted.
-  const surface = useMemo(() => (format === 'html' ? htmlToSurface(text) : surfaceFrom(expandCompact(text).messages)), [format, text]);
+  // A page that had the accessibility pass gets its annotations applied on top (they are stored beside it).
+  const a11y = view?.a11y;
+  const surface = useMemo(() => {
+    const base = format === 'html' ? htmlToSurface(text) : surfaceFrom(expandCompact(text).messages);
+    return a11y ? applyA11y(base, a11y).surface : base;
+  }, [format, text, a11y]);
   const error = !current?.page ? mine?.error : null;
-  // Only the A2UI path has a second pass, so only it ever says it is choosing links.
-  const choosingLinks = format === 'a2ui' && current?.kind === 'page' && draft?.final;
-  const stage = !current?.page && !error ? (choosingLinks ? 'Choosing links' : 'Writing') : null;
+  // Which pass is running. Only the A2UI path has a link pass, so only it ever says it is choosing links.
+  const phase = !current?.page && !error
+    ? draft?.stage === 'a11y' ? 'access'
+      : draft?.stage === 'links' || (format === 'a2ui' && current?.kind === 'page' && draft?.final) ? 'linking'
+        : 'writing'
+    : null;
+  const stage = translating && !trFailed ? t('page.translating') : phase ? t(`page.${phase === 'writing' ? 'writing' : phase === 'linking' ? 'linking' : 'access'}`) : null;
+
+  // The language was switched on a page that is already written: translate that page, keeping its wording and
+  // its links. The result is stored under its language, so switching back (or on again) costs nothing.
+  const translateBy = useRef(0);
+  useEffect(() => {
+    if (!translating) return;
+    const node = current;
+    const key = wantKey;
+    const s = engineSettings();
+    if (!s.apiKey) return setTrError({ id: node.id, key, message: t('error.key') });
+    const source = node.page.format === 'html' ? node.page.html : node.page.compact;
+    const entryKey = `tr|${node.id}|${key}|${s.model}|${s.linkModel}|${source.length}:${node.page.metrics.cost}`;
+    if (!has(entryKey) && overBudget(settings.budget)) return setTrError({ id: node.id, key, message: t('error.budget') });
+    setTrError(null);
+    const entry = ensure(entryKey, async () => {
+      const result = await translatePage({ page: node.page, settings: s });
+      return result;
+    });
+    let off = null;
+    let finished = false;
+    const done = (snap) => {
+      if (!snap.settled || finished) return;
+      finished = true;
+      if (snap.page) {
+        const r = snap.page;
+        const variant = { format: node.page.format, [node.page.format === 'html' ? 'html' : 'compact']: r.text, a11y: r.a11y, lang: r.lang, translation: r.metrics, metrics: summarize([...node.page.metrics.passes, ...r.metrics.passes]) };
+        journey.translated(node.id, key, variant);
+      } else if (snap.error) setTrError({ id: node.id, key, message: errorText(snap.error, t) });
+      off?.();
+    };
+    off = entry.subscribe(done);
+    if (finished) off();
+    translateBy.current += 1;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the page, its target language and the models are the inputs
+  }, [current?.id, translating, wantKey, settings.model, settings.linkModel, settings.apiKey, attempt]);
+
 
   // Search box follows the page being shown.
   const shown = current ? current.topic : '';
@@ -111,6 +172,17 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.text = settings.text;
   }, [settings.text]);
+
+  // The language of the app: its text, the document's `lang`, and the direction it reads in.
+  // Ready-made and cached languages are instant; a custom one that is not yet cached is translated by the model.
+  const language = currentLanguage();
+  useEffect(() => {
+    const s = engineSettings();
+    applyLanguage(language, { apiKey: s.apiKey, modelId: s.model });
+    document.documentElement.lang = language.code ?? '';
+    document.documentElement.dir = language.rtl ? 'rtl' : 'ltr';
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `language` is derived from these two settings
+  }, [settings.language, settings.customLanguage]);
   // The page canvas and scrollbars follow the app's mode, not only the operating system's.
   useEffect(() => {
     document.documentElement.style.colorScheme = settings.mode === 'system' ? 'light dark' : settings.mode;
@@ -165,7 +237,7 @@ export default function App() {
         if (!s.apiKey || overBudget(settings.budget)) return;
         ensure(
           pageKey({ topic, lens }, s),
-          (onEvent) => writeByFormat({ topic, lens, settings: s, onEvent }),
+          (onEvent) => runPage({ node: { kind: 'page', topic, lens }, settings: s, onEvent }),
           { prefetch: true },
         );
       }, PREFETCH_DELAY);
@@ -180,6 +252,40 @@ export default function App() {
     .slice(-5)
     .reverse()
     .map((r) => ({ id: r.node.id, topic: r.node.topic, pages: rows.filter((x) => x.node.id === r.node.id || (x.depth > 0 && stopsTo(state.nodes, x.node.id)[0] === r.node.topic)).length }));
+
+  // WebMCP: agents in the browser get the same moves a reader has. The tools read the latest state through a
+  // ref, so they are registered once and always see the page as it is now.
+  const live_ = useRef(null);
+  live_.current = {
+    node: current,
+    surface,
+    error,
+    spend,
+    budget: settings.budget,
+    hasKey: Boolean(getApiKey()),
+    translating: translating && !trFailed,
+    canGoBack: journey.canGoBack,
+    canGoForward: journey.canGoForward,
+    preferences: { language: settings.language, format: settings.format, depth: settings.depth, accessibility: settings.a11y, theme: settings.mode, text_size: settings.text },
+    trail: rows.map((r) => ({ id: r.node.id, topic: r.node.topic, depth: r.depth, current: r.node.id === current?.id, written: Boolean(r.node.page) })),
+    go: (spec) => { remember(); return journey.go(spec); },
+    journey,
+  };
+  useEffect(
+    () =>
+      registerWebMcp({
+        read: () => live_.current,
+        trail: () => live_.current.trail,
+        search: (topic) => live_.current.go({ topic, fresh: true }),
+        follow: (topic) => live_.current.go({ topic }),
+        home: () => live_.current.journey.home(),
+        back: () => live_.current.journey.back(),
+        forward: () => live_.current.journey.forward(),
+        jump: (id) => live_.current.journey.jump(id),
+        save: saveSettings,
+      }),
+    [],
+  );
 
   const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
   const isDark = settings.mode === 'dark' || (settings.mode === 'system' && prefersDark);
@@ -226,20 +332,30 @@ export default function App() {
           onToggleDark={toggleDark}
           trailOpen={trailOpen}
           onToggleTrail={toggleTrail}
-          onSettings={() => setSettingsOpen(true)}
+          onSettings={() => {
+            setFocusLanguage(false);
+            setSettingsOpen(true);
+          }}
           format={settings.format}
           onFormat={(next) => saveSettings({ format: next })}
+          language={settings.language}
+          customLanguage={settings.customLanguage}
+          onLanguage={(id) => saveSettings({ language: id })}
+          onOtherLanguage={() => {
+            setFocusLanguage(true);
+            setSettingsOpen(true);
+          }}
         />
 
         <div className={`stage${trailOpen ? ' has-trail' : ''}`}>
           {trailOpen && (
-            <aside className="trail-col" aria-label="Trail">
+            <aside className="trail-col" aria-label={t('trail.title')}>
               <Trail
                 rows={rows}
                 currentId={current?.id}
                 canRetro={current?.kind === 'page' && stops.length >= 2 && !needsWriting}
                 onJump={jump}
-                onRetro={() => open({ kind: 'retro', topic: RETRO_TITLE, stops })}
+                onRetro={() => open({ kind: 'retro', topic: t('retro.title'), stops })}
                 onClear={journey.reset}
               />
             </aside>
@@ -248,36 +364,56 @@ export default function App() {
           <main>
             {current ? (
               <Reader
-                key={current.id}
+                key={`${current.id}|${variant && variant !== page ? wantKey : ''}`}
                 node={current}
                 format={format}
                 surface={surface}
                 stage={stage}
-                streaming={stage === 'Writing'}
+                streaming={phase === 'writing'}
                 error={error}
+                pageLang={view?.lang}
                 truncated={current.page?.truncated}
                 linkError={current.page?.linkError}
-                metrics={current.page?.metrics}
+                metrics={view?.metrics}
+                notice={trFailed ? t('error.translate', { message: trFailed.message }) : null}
+                onRetranslate={() => {
+                  forget(`tr|${current.id}|${wantKey}`);
+                  setTrError(null);
+                  setAttempt((a) => a + 1);
+                }}
                 onExplore={follow}
                 onRetry={retry}
                 onFresh={() => {
                   forget(keyOf(current, engineSettings()));
                   journey.rewrite(current.id, []);
                 }}
-                onSettings={() => setSettingsOpen(true)}
+                onSettings={() => {
+                  setFocusLanguage(false);
+                  setSettingsOpen(true);
+                }}
                 onHover={onHover}
               />
             ) : (
-              <Launchpad hasKey={Boolean(getApiKey())} journeys={journeys} onOpen={search} onJump={jump} onSettings={() => setSettingsOpen(true)} />
+              <Launchpad
+                hasKey={Boolean(getApiKey())}
+                languageId={languageKey(engineSettings())}
+                journeys={journeys}
+                onOpen={search}
+                onJump={jump}
+                onSettings={() => {
+                  setFocusLanguage(false);
+                  setSettingsOpen(true);
+                }}
+              />
             )}
           </main>
         </div>
 
         <footer className="foot">
-          <Button label="About LatentSpace" variant="ghost" size="sm" onClick={() => open({ topic: ABOUT_TOPIC, fresh: true })} />
+          <Button label={t('footer.about')} variant="ghost" size="sm" onClick={() => open({ topic: t('footer.about'), fresh: true, about: true })} />
         </footer>
 
-        {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+        {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} focusLanguage={focusLanguage} />}
        </div>
       </NavigationProvider>
     </Theme>

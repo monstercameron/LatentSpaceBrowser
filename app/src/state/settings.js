@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { DEFAULT_DEPTH, DEFAULT_LINK_MODEL, DEFAULT_MODEL, DEPTHS, MODELS } from '../engine/models.js';
+import { CUSTOM, LANGUAGES, cleanCode, resolveLanguage } from '../i18n/languages.js';
 
 // One small external store, so any component can read settings and any change reaches all of them.
 const KEY = 'latentspace_settings_v2';
@@ -15,6 +16,9 @@ export const DEFAULTS = {
   mode: 'system', // light | dark | system
   prefetch: false, // start writing a link's page when it is hovered
   budget: 0, // stop spending at this many dollars for the session; 0 is no limit
+  language: 'en', // the language of pages and of the app: one of the quick choices, or 'custom'
+  customLanguage: null, // { name, native, code, rtl } for 'custom', as the model described it
+  a11y: false, // a third pass that adds a plain-language summary, abbreviations, language tags and link descriptions
 };
 
 const TEXT = ['small', 'medium', 'large'];
@@ -34,7 +38,20 @@ export function normalize(raw = {}) {
     mode: MODES.includes(raw.mode) ? raw.mode : DEFAULTS.mode,
     prefetch: raw.prefetch === true,
     budget: Number.isFinite(raw.budget) && raw.budget > 0 ? raw.budget : 0,
+    ...normalizeLanguage(raw),
+    a11y: raw.a11y === true,
   };
+}
+
+/** A language is one of the quick choices, or 'custom' with a usable description; anything else is English. */
+function normalizeLanguage(raw) {
+  const custom = raw.customLanguage;
+  const usable = custom && typeof custom.name === 'string' && custom.name.trim();
+  const customLanguage = usable
+    ? { name: custom.name.trim(), native: String(custom.native || custom.name).trim(), code: cleanCode(custom.code), rtl: custom.rtl === true }
+    : null;
+  const known = LANGUAGES.some((l) => l.id === raw.language);
+  return { language: known ? raw.language : raw.language === CUSTOM && customLanguage ? CUSTOM : DEFAULTS.language, customLanguage };
 }
 
 const read = (key) => {
@@ -75,8 +92,14 @@ export function getApiKey() {
   return current.apiKey || (import.meta.env?.DEV ? (import.meta.env.VITE_APIKEY ?? '') : '');
 }
 
-/** Settings as the engine wants them: the effective key included. */
-export const engineSettings = () => ({ ...current, apiKey: getApiKey() });
+/** Settings as the engine wants them: the effective key, and the language as a full description (`lang`). */
+export const engineSettings = () => ({
+  ...current,
+  apiKey: getApiKey(),
+  lang: resolveLanguage(current.language, current.customLanguage),
+});
+
+export const currentLanguage = () => resolveLanguage(current.language, current.customLanguage);
 
 export function useSettings() {
   return useSyncExternalStore(

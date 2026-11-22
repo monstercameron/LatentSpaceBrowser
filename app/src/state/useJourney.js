@@ -78,12 +78,12 @@ export function useJourney() {
 
   /** Opens a page after the current one. `fresh` is a search: no lens, a new branch. Returns its id. */
   const go = useCallback(
-    ({ topic, kind = 'page', fresh = false, stops, lens }) => {
+    ({ topic, kind = 'page', fresh = false, stops, lens, about = false }) => {
       const { nodes, currentId } = latest.current;
       const id = newId();
       const lensNow = kind === 'retro' ? [] : (lens ?? (fresh ? [] : lensOf(nodes, currentId)));
       stamp(id, urlFor({ kind, topic, lens: lensNow }));
-      dispatch({ type: 'push', id, kind, topic, fresh, lens: lensNow, stops });
+      dispatch({ type: 'push', id, kind, topic, fresh, lens: lensNow, stops, about });
       return id;
     },
     [stamp],
@@ -106,6 +106,7 @@ export function useJourney() {
   }, [stamp]);
 
   const fill = useCallback((id, page) => dispatch({ type: 'fill', id, page }), []);
+  const translated = useCallback((id, key, variant) => dispatch({ type: 'translated', id, key, variant }), []);
   const rewrite = useCallback((id, lens) => {
     dispatch({ type: 'rewrite', id, lens });
     const node = latest.current.nodes[id];
@@ -125,6 +126,7 @@ export function useJourney() {
     jump,
     home,
     fill,
+    translated,
     rewrite,
     reset,
     back: useCallback(() => window.history.back(), []),

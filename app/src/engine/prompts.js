@@ -37,8 +37,24 @@ const substance = (h3) => `Substance. A page explains; it does not summarize. A 
 
 const shapeOf = (depth, h2, h3) => depth.shape.replaceAll('{h2}', h2).replaceAll('{h3}', h3);
 
+const isEnglish = (lang) => !lang || lang.id === 'en';
+const languageName = (lang) => (lang.native && lang.native !== lang.name ? `${lang.name} (${lang.native})` : lang.name);
+
+/**
+ * The instruction that moves a page into another language, or nothing for English (so English pages cost
+ * no extra tokens). The structure markers stay as they are, because the app reads them; only the words move.
+ */
+export const languageLine = (lang, markers) =>
+  isEnglish(lang)
+    ? ''
+    : `Language. Write the whole page in ${languageName(lang)}: the title, the fact labels and values, the headings and the prose. ${markers} Write names the way ${lang.name} readers write them.`;
+
+const COMPACT_MARKERS = 'Keep the line markers (#, @, ##, ###, -, >) and the page structure exactly as described.';
+const HTML_MARKERS = 'Keep the HTML tags exactly as described.';
+
 /** Pass one: the page, in a compact line format that the app expands into UI. `depth` is an entry of DEPTHS. */
-export const pageSystem = (depth) => `You are the engine of LatentSpace, an encyclopedia whose every page is written on demand.
+export const pageSystem = (depth, lang = null) => `You are the engine of LatentSpace, an encyclopedia whose every page is written on demand.
+${languageLine(lang, COMPACT_MARKERS)}
 You write each page in a compact line-based format. Reply with those lines and nothing else: no code fences, no commentary, no HTML, no JSON.
 
 Each line is one block, chosen by how it starts:
@@ -64,7 +80,8 @@ Length: about ${depth.words} words of prose in total, and enough to do the secti
  * The raw-HTML path's prompt, as the first version of the app had it: the model writes bare semantic
  * HTML and chooses its own links as it goes, in one pass.
  */
-export const htmlSystem = (depth) => `You are the engine of LatentSpace, an encyclopedia whose every page is written on demand.
+export const htmlSystem = (depth, lang = null) => `You are the engine of LatentSpace, an encyclopedia whose every page is written on demand.
+${languageLine(lang, HTML_MARKERS)}
 Reply with one HTML fragment and nothing else. It begins with <h1> and ends with a closing tag. Never use markdown, code fences, commentary, <html>, <body>, or class, style and id attributes.
 Tags you may use: h1 h2 h3 p ul ol li a b i blockquote aside table tr th td code pre.
 Links are how readers travel, so every page needs them. In each paragraph, wrap the two to four most notable people, places, objects, terms or concepts in a bare <a>...</a> with no attributes. Never link the same thing twice on a page, and never link common words. The link text becomes the next page's topic, so make it a self-contained noun phrase.
@@ -77,8 +94,9 @@ ${substance('<h3>')}
 Page layout: <h1>title</h1>, an <aside> of 3 to 6 key facts written as <p><b>Label</b> value</p>, a lead paragraph, then ${shapeOf(depth, '<h2>', '<h3>')}.
 Length: about ${depth.words} words, and enough to do the sections justice. Finish the page within that length.`;
 
-export function pageUser(topic, lens = []) {
-  if (topic === ABOUT_TOPIC) {
+/** `about` marks the page about the app itself, whatever the topic is called in the reader's language. */
+export function pageUser(topic, lens = [], about = false) {
+  if (about || topic === ABOUT_TOPIC) {
     return `Topic: LatentSpace, the software this page is part of. Write its entry from these facts only:
 - A recursive, generative encyclopedia: every page is written on the fly by a language model, and every link opens a page that did not exist until it was clicked.
 - A static React app built on the Astryx design system. It has no backend; the browser streams pages straight from Cerebras Inference.
@@ -112,6 +130,24 @@ Example, for a page about basalt:
 4: magnetite | silica
 Leave out a block that has nothing to link. Reply with only lines like these.`;
 
+/** The link prompt for a page in `lang`: the phrases are copied as written, and any page title is in that language. */
+export const linksSystem = (lang) =>
+  isEnglish(lang)
+    ? LINKS_SYSTEM
+    : `${LINKS_SYSTEM}\nThe page is written in ${languageName(lang)}. Copy phrases exactly as written in it, and write any title after " > " in ${lang.name} too.`;
+
+/**
+ * Pass three, optional: accessibility. It reads the finished page and returns four kinds of line, which
+ * the app applies. The model never retypes the page. Everything it writes is in the page's language.
+ */
+export const a11ySystem = (lang) => `You add accessibility information to a finished encyclopedia page, for readers who use screen readers or text-to-speech, or who want plain language first. You get the page as text: "#" lines are headings, other lines are paragraphs, list items, quotes and key facts, and [[double brackets]] mark links ([[text|Page title]] shows the page it opens).
+Reply with only lines of these four kinds:
+summary: one or two sentences in plain, simple language saying what the page is about, for a reader who wants the gist before the detail. Write it once.
+abbr: ABBREVIATION = what it stands for. Only abbreviations and acronyms that appear in the text and that a general reader may not know. Skip ones the text already explains.
+lang: phrase | code. A phrase in the text that is in a different language from the page, copied exactly, with its BCP 47 language code (la for Latin, fr for French). Skip names that read the same in every language.
+link: link text = where that link goes, in about eight words. One line for each link in the text, copied exactly as the link text appears, describing the page it opens so a listener knows before following it.
+Write the summary, expansions and link descriptions in ${isEnglish(lang) ? 'English' : languageName(lang)}. Copy every phrase from the page exactly as written, in the page's own language.`;
+
 /** The retrospective, in the same line format. Its links are explicit, so it needs no second pass. */
 export const JOURNEY_SYSTEM = `You write the "Journey Retrospective" page of an encyclopedia, in a compact line format. Reply with the lines and nothing else: no code fences, no commentary, no HTML, no JSON.
 A line starting "# " is the title, "## " a section heading, "- " a list item, and any other line a paragraph. Put each stop and each suggested topic in [[double brackets]], written as given.
@@ -126,6 +162,11 @@ Write exactly this shape:
 ## Suggested expeditions
 (three "- " items, each a new topic in [[brackets]], a dash, then one sentence of intrigue; the three must diverge from each other)`;
 
+export const journeySystem = (lang) =>
+  isEnglish(lang)
+    ? JOURNEY_SYSTEM
+    : `${JOURNEY_SYSTEM}\nLanguage. Write the whole page in ${languageName(lang)}, the title and every heading included. ${COMPACT_MARKERS} Keep each stop and each suggested topic in its own language exactly as given or as ${lang.name} readers write it.`;
+
 export const journeyUser = (stops) => `Path: ${stops.join(' → ')}`;
 
 // A model asked the same question gives much the same answer, so the app picks
@@ -138,6 +179,6 @@ export const FIELDS = [
   'agriculture', 'cryptography', 'zoology', 'timekeeping', 'trade routes', 'volcanoes',
 ];
 
-export const startersUser = (fields) => `Suggest ${fields.length} encyclopedia topics for a curious reader to start from, one from each of these fields, in this order: ${fields.join(', ')}.
-Each is a specific, concrete subject named in one to three words and capitalised as an encyclopedia title, and not the first example anyone would think of.
+export const startersUser = (fields, lang = null) => `Suggest ${fields.length} encyclopedia topics for a curious reader to start from, one from each of these fields, in this order: ${fields.join(', ')}.
+Each is a specific, concrete subject named in one to three words and capitalised as an encyclopedia title, and not the first example anyone would think of.${isEnglish(lang) ? '' : `\nWrite each topic in ${languageName(lang)}.`}
 Reply with the topics only, one per line: no numbering, bullets, punctuation or commentary.`;

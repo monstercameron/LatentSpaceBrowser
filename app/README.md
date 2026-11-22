@@ -35,3 +35,19 @@ $0.007 a page in all, Short about a quarter of that.
 
 Every page has a receipt (time, tokens, dollars, per pass), and the header keeps a running total.
 Turn on "Write pages ahead of your click" and hovering a link writes its page in the background.
+
+## Languages and accessibility
+
+Pick a language in the header (five built in) or choose "Other language…" and type any language; the model
+translates the interface once and it is remembered. Settings has an **Accessibility pass** switch (off by
+default) that adds a third call: a summary, abbreviations spelled out, language tags, and link descriptions.
+Regenerate the shipped catalogs with `node --env-file=../.env scripts/translate-ui.mjs`.
+
+## For agents (WebMCP)
+
+The app registers tools with the browser's [WebMCP](https://developer.chrome.com/docs/ai/webmcp) API
+(`navigator.modelContext.registerTool`), so an agent in a WebMCP-capable browser can use it the way a reader does:
+`search`, `open_link`, `read_page` (whole or one section), `list_links`, `go_back`, `go_forward`, `go_home`,
+`get_trail`, `get_status` and `set_preferences`. The tools are in `src/agent/`. Each page an agent opens is a paid
+call, so they refuse without an API key or past the spending limit; the key and the limit can be neither read nor
+changed through them. Where WebMCP is not supported the same tools are still on `window.__latentspaceTools`.

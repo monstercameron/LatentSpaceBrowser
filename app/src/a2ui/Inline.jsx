@@ -8,7 +8,8 @@ const SPAWN_MS = 800; // keep in step with the `spawn` animation in motion.css
 const STAGGER_MS = 28; // between the words that arrive in one burst
 const BURST_MS = 320; // however many words arrive at once, their stagger spans at most this long
 const JOINER = '⁠'; // WORD JOINER: no line break on either side
-const CLOSING = /^[,.;:!?%)\]}»”’…]+$/; // punctuation that belongs to the word before it
+// Punctuation that belongs to the word before it, in Latin, CJK, Devanagari and Arabic scripts.
+const CLOSING = /^[,.;:!?%)\]}»”’…。，、；：！？）」』】》〉।॥،؛؟]+$/;
 
 const isSpace = (part) => /^\s+$/.test(part);
 
@@ -76,6 +77,10 @@ export function Inline({ text, tail = false }) {
       );
     }
     if (token.kind === 'code') return <code key={`t${t}`} className="latent-code-inline">{token.text}</code>;
+    // The accessibility pass: an abbreviation says what it stands for, a phrase in another language
+    // names its language so a screen reader switches voice.
+    if (token.kind === 'abbr') return <abbr key={`t${t}`} className="latent-abbr" title={token.expansion}>{words(token, `t${t}`)}</abbr>;
+    if (token.kind === 'lang') return <span key={`t${t}`} lang={token.code}>{words(token, `t${t}`)}</span>;
     if (token.kind === 'link') {
       const no = linkNo++;
       return (
@@ -83,6 +88,8 @@ export function Inline({ text, tail = false }) {
           <Link
             hasUnderline={false}
             className="latent-link"
+            // a link that says where it goes: its name for a screen reader begins with what is on screen
+            {...(token.desc ? { label: `${token.text}: ${token.desc}`, tooltip: token.desc } : {})}
             href={hrefFor(token.target)}
             onClick={(e) => {
               if (!plain(e)) return;

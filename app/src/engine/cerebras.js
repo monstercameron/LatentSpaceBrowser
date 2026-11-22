@@ -2,19 +2,26 @@ import { cost, getModel } from './models.js';
 
 const API_URL = 'https://api.cerebras.ai/v1/chat/completions';
 
+/**
+ * A failed call. `message` is English, for logs and as a fallback; `code` names what went wrong so the
+ * interface can say it in the reader's language (error.<code> in the catalogs); `detail` is whatever
+ * the API added, which is shown after it as it came.
+ */
 export class ApiError extends Error {
-  constructor(message, status) {
-    super(message);
+  constructor(message, status, code = 'server', detail = '') {
+    super(detail ? `${message} ${detail}` : message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
+    this.detail = detail;
   }
 }
 
 const REASONS = {
-  401: 'Cerebras rejected the API key.',
-  403: 'This API key is not allowed to use that model.',
-  404: 'That model is not available for this API key.',
-  429: 'Rate limit reached. Wait a moment and try again.',
+  401: ['rejected', 'Cerebras rejected the API key.'],
+  403: ['forbidden', 'This API key is not allowed to use that model.'],
+  404: ['model', 'That model is not available for this API key.'],
+  429: ['rate', 'Rate limit reached. Wait a moment and try again.'],
 };
 
 async function toError(res) {
@@ -25,8 +32,8 @@ async function toError(res) {
   } catch {
     // no JSON body
   }
-  const reason = REASONS[res.status] ?? `Cerebras returned an error (${res.status}).`;
-  return new ApiError(detail ? `${reason} ${detail}` : reason, res.status);
+  const [code, reason] = REASONS[res.status] ?? ['server', `Cerebras returned an error (${res.status}).`];
+  return new ApiError(reason, res.status, code, detail);
 }
 
 async function* serverEvents(res) {
@@ -54,7 +61,7 @@ async function* serverEvents(res) {
  * `onText` receives the whole text so far each time it grows.
  */
 export async function chat({ apiKey, modelId, messages, maxTokens, temperature = 0.7, signal, onText }) {
-  if (!apiKey) throw new ApiError('Add your Cerebras API key in Settings to start exploring.', 401);
+  if (!apiKey) throw new ApiError('Add your Cerebras API key in Settings to start exploring.', 401, 'key');
   const model = getModel(modelId);
 
   const started = performance.now();
@@ -77,7 +84,7 @@ export async function chat({ apiKey, modelId, messages, maxTokens, temperature =
     if (error.name === 'AbortError') throw error;
     // Cerebras sends no CORS headers on a rejected key, so the browser reports
     // that case exactly like a dropped connection.
-    throw new ApiError('No answer from Cerebras. The connection dropped or the API key was rejected: check the key in Settings.', 0);
+    throw new ApiError('No answer from Cerebras. The connection dropped or the API key was rejected: check the key in Settings.', 0, 'network');
   }
   if (!res.ok) throw await toError(res);
 
