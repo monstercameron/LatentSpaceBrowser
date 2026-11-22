@@ -7,4 +7,8 @@ export default defineConfig({
   // A local .env in the repository root may hold VITE_APIKEY for development only.
   // The app reads it in dev builds and never in production.
   envDir: '../',
+  build: {
+    outDir: '../docs', // served by GitHub Pages (main branch, /docs)
+    emptyOutDir: true,
+  },
 });

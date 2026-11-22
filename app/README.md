@@ -9,7 +9,7 @@ cd app
 npm install
 npm run dev      # http://localhost:5173
 npm test         # engine, A2UI and state tests (node --test)
-npm run build    # static site in dist/
+npm run build    # static site in ../docs, which GitHub Pages serves (main branch, /docs)
 ```
 
 Add your Cerebras API key in Settings. It stays in your browser and is sent only to Cerebras.
