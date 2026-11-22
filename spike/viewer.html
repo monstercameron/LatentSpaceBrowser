@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A2UI spike viewer</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fafaf7; --card:#fff; --ink:#1b1b1b; --muted:#5b5b5b; --line:#d9d9d2; --link:#0b5cad; --bad:#b3261e; --good:#1b7a3e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#121212; --card:#1c1c1c; --ink:#ececec; --muted:#a6a6a6; --line:#333; --link:#7db7ff; --bad:#ff8a80; --good:#6fd08c; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 Georgia, serif; }
+  header { padding:16px; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:12px; align-items:center; font-family:system-ui, sans-serif; }
+  header h1 { font-size:1rem; margin:0 12px 0 0; }
+  select { font:inherit; padding:4px 8px; background:var(--card); color:var(--ink); border:1px solid var(--line); border-radius:6px; }
+  main { display:grid; grid-template-columns:repeat(auto-fit, minmax(340px, 1fr)); gap:16px; padding:16px; margin:0 auto; }
+  .facts, aside { float:none !important; width:auto !important; margin:0 0 .8rem 0 !important; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 20px; min-width:0; }
+  .bar { font:13px/1.4 system-ui, sans-serif; color:var(--muted); display:flex; flex-wrap:wrap; gap:6px 14px; border-bottom:1px solid var(--line); padding-bottom:10px; margin-bottom:14px; }
+  .bar b { color:var(--ink); }
+  .ok { color:var(--good); font-weight:600; } .no { color:var(--bad); font-weight:600; }
+  h1.t, .page h1 { font-size:1.7rem; margin:.2em 0 .4em; } .page h2 { font-size:1.2rem; margin:1.2em 0 .3em; }
+  .page a, .lnk { color:var(--link); text-decoration:underline; cursor:pointer; }
+  .facts { float:right; width:14rem; margin:0 0 .8rem 1rem; padding:8px 12px; border:1px solid var(--line); border-radius:8px; font:13px/1.4 system-ui, sans-serif; }
+  .facts dt { font-weight:600; } .facts dd { margin:0 0 6px; }
+  aside { float:right; width:14rem; margin:0 0 .8rem 1rem; padding:8px 12px; border:1px solid var(--line); border-radius:8px; font:13px/1.4 system-ui, sans-serif; }
+  aside p { margin:.3em 0; }
+  table { border-collapse:collapse; } td, th { border:1px solid var(--line); padding:3px 8px; }
+  blockquote { margin:1em 0; padding-left:1em; border-left:3px solid var(--line); color:var(--muted); }
+  .tabs button { font:13px system-ui; padding:4px 10px; border:1px solid var(--line); background:var(--bg); color:var(--ink); border-radius:6px 6px 0 0; cursor:pointer; }
+  .tabs button[aria-selected=true] { background:var(--card); font-weight:700; }
+  .problems { font:12px/1.4 ui-monospace, monospace; color:var(--bad); border-top:1px solid var(--line); margin-top:14px; padding-top:10px; white-space:pre-wrap; word-break:break-all; }
+  details { font:12px system-ui; margin-top:10px; color:var(--muted); } pre { white-space:pre-wrap; word-break:break-all; font-size:11px; }
+  .clear { clear:both; }
+</style>
+</head>
+<body>
+<header>
+  <h1>A2UI spike: same topic, two formats</h1>
+  <label>Model <select id="model"></select></label>
+  <label>Topic <select id="topic"></select></label>
+  <span id="summary" style="color:var(--muted);font-size:13px"></span>
+</header>
+<main>
+  <section id="html"></section>
+  <section id="a2ui"></section>
+  <section id="lite"></section>
+  <section id="lite2"></section>
+  <section id="compact"></section>
+  <section id="compactl"></section>
+</main>
+<script type="module">
+import { parseLine } from './repair.mjs';
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+
+// HTML side: allowlist the same tags the app allows.
+const OK_TAGS = new Set('h1 h2 h3 h4 p ul ol li a b strong i em blockquote aside table thead tbody tr th td code pre br hr sub sup'.split(' '));
+function clean(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  (function walk(node) {
+    for (const el of [...node.children]) {
+      if (!OK_TAGS.has(el.localName)) { el.replaceWith(...el.childNodes); continue; }
+      for (const a of [...el.attributes]) el.removeAttribute(a.name);
+      walk(el);
+    }
+  })(doc.body);
+  return doc.body.innerHTML;
+}
+
+// A2UI side: render the spike catalog from whatever lines parse.
+const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\[\[(.+?)\]\]/g, '<span class="lnk">$1</span>');
+function renderA2ui(raw) {
+  const comps = new Map(); const problems = [];
+  raw.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('```')).forEach((line, i) => {
+    const parsed = parseLine(line);
+    if (!parsed) { problems.push(`line ${i + 1}: not JSON, even after bracket repair\n   ${line.slice(0, 160)}${line.length > 160 ? '…' : ''}`); return; }
+    for (const c of parsed.value.updateComponents?.components ?? []) comps.set(c.id, c);
+  });
+  const seen = new Set();
+  const draw = (id) => {
+    const c = comps.get(id);
+    if (!c) return `<p class="no">[missing component "${esc(id)}"]</p>`;
+    seen.add(id);
+    switch (c.component) {
+      case 'Column': return (c.children ?? []).map(draw).join('');
+      case 'Heading': return `<h${c.level >= 1 && c.level <= 3 ? c.level : 2}>${inline(c.text)}</h${c.level >= 1 && c.level <= 3 ? c.level : 2}>`;
+      case 'Prose': return `<p>${inline(c.text)}</p>`;
+      case 'Facts': return `<dl class="facts">${(c.items ?? []).map((f) => `<dt>${esc(f.label)}</dt><dd>${inline(f.value)}</dd>`).join('')}</dl>`;
+      case 'List': { const tag = c.ordered ? 'ol' : 'ul'; return `<${tag}>${(c.items ?? []).map((x) => `<li>${inline(x)}</li>`).join('')}</${tag}>`; }
+      case 'Table': return `<table><tr>${(c.headers ?? []).map((h) => `<th>${inline(h)}</th>`).join('')}</tr>${(c.rows ?? []).map((r) => `<tr>${r.map((x) => `<td>${inline(x)}</td>`).join('')}</tr>`).join('')}</table>`;
+      case 'Quote': return `<blockquote>${inline(c.text)}</blockquote>`;
+      case 'Tabs': return `<div class="tabs"><div>${(c.tabs ?? []).map((t, k) => `<button aria-selected="${k === 0}" data-tab="${esc(c.id)}:${k}">${esc(t.title)}</button>`).join('')}</div>${(c.tabs ?? []).map((t, k) => `<div data-pane="${esc(c.id)}:${k}" ${k ? 'hidden' : ''}>${draw(t.child)}</div>`).join('')}</div>`;
+      default: return `<p class="no">[unknown component ${esc(c.component)}]</p>`;
+    }
+  };
+  const body = comps.has('root') ? draw('root') : '<p class="no">No root component arrived: nothing to draw.</p>';
+  const orphans = [...comps.keys()].filter((id) => !seen.has(id));
+  if (orphans.length) problems.push(`${orphans.length} component(s) parsed but not reachable from root: ${orphans.join(', ')}`);
+  return { body, problems };
+}
+
+let rows = [];
+const bar = (r, extra) => `<div class="bar"><span><b>${esc(r.format.toUpperCase())}</b></span><span>${r.outTokens} out tokens</span><span>$${r.cost.toFixed(5)}</span><span>${r.seconds.toFixed(2)}s</span><span>${r.words ?? '?'} words, ${r.links ?? '?'} links</span><span class="${r.valid ? 'ok' : 'no'}">${r.valid ? 'valid' : 'INVALID'}</span>${extra ?? ''}</div>`;
+
+function show() {
+  const model = $('#model').value, topic = $('#topic').value;
+  const h = rows.find((r) => r.modelId === model && r.topic === topic && r.format === 'html');
+  const a = rows.find((r) => r.modelId === model && r.topic === topic && r.format === 'a2ui');
+  $('#html').innerHTML = h && !h.error ? `${bar(h)}<div class="page">${clean(h.text)}</div><div class="clear"></div><details><summary>Raw reply</summary><pre>${esc(h.text)}</pre></details>` : '<p class="no">No result.</p>';
+  const drawA2ui = (sel, r, label) => {
+    if (!r || r.error) { $(sel).innerHTML = '<p class="no">No result.</p>'; return; }
+    const { body, problems } = renderA2ui(r.wrapped ?? r.text);
+    $(sel).innerHTML = `${bar(r, `<span>${label}</span>${r.repairs ? `<span>${r.repairs} lines needed bracket repair</span>` : ''}`)}<div class="page">${body}</div><div class="clear"></div>${problems.length ? `<div class="problems"><b>What broke (these lines were dropped):</b>\n${problems.map(esc).join('\n')}</div>` : ''}<details><summary>Raw reply (${r.text.split('\n').length} lines)</summary><pre>${esc(r.text)}</pre></details>`;
+  };
+  drawA2ui('#a2ui', a, 'model writes the full envelope');
+  drawA2ui('#lite', rows.find((r) => r.modelId === model && r.topic === topic && r.format === 'lite'), 'model writes components, app wraps');
+  drawA2ui('#lite2', rows.find((r) => r.modelId === model && r.topic === topic && r.format === 'lite2'), 'lite + natural link wording');
+  drawA2ui('#compact', rows.find((r) => r.modelId === model && r.topic === topic && r.format === 'compact'), 'model writes plain lines, app expands');
+  const cl = rows.find((r) => r.modelId === model && r.topic === topic && r.format === 'compact+links');
+  drawA2ui('#compactl', cl, cl ? `page ready at ${cl.renderSeconds.toFixed(2)}s, then +${cl.linkPass.added} links ${cl.passSeconds.toFixed(2)}s later` : '');
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-tab]'); if (!b) return;
+  const [id, k] = b.dataset.tab.split(':'); const box = b.closest('.tabs');
+  box.querySelectorAll('[data-tab]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+  box.querySelectorAll('[data-pane]').forEach((p) => { p.hidden = p.dataset.pane !== `${id}:${k}`; });
+});
+
+fetch('results.json').then((r) => r.json()).then((data) => {
+  rows = data;
+  const uniq = (key) => [...new Set(rows.map((r) => r[key]))];
+  $('#model').innerHTML = uniq('modelId').map((m) => `<option>${esc(m)}</option>`).join('');
+  $('#topic').innerHTML = uniq('topic').map((t) => `<option>${esc(t)}</option>`).join('');
+  const tally = (f) => `${f}: ${rows.filter((r) => r.format === f && r.valid).length}/${rows.filter((r) => r.format === f).length} valid`;
+  $('#summary').textContent = ['html', 'a2ui', 'lite', 'lite2', 'compact', 'compact+links'].map(tally).join('  |  ');
+  $('#model').onchange = $('#topic').onchange = show;
+  show();
+});
+</script>
+</body>
+</html>

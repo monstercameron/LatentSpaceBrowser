@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "a2ui-spike-viewer",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["spike/serve.mjs"],
+      "port": 5190
+    }
+  ]
+}
